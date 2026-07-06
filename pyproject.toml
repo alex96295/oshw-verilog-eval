@@ -1,0 +1,23 @@
+[project]
+name = "oshw-verilog-eval"
+version = "0.1.0"
+description = "Generate an LLM RTL design/verification benchmark from open-source hardware (OSHW) SystemVerilog designs."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "litellm>=1.60",
+    "tiktoken>=0.7",
+]
+
+# spec-gen is a standalone script run via `uv run scripts/spec-gen ...` (or the
+# orchestrator), not an installed console entry point.
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+# spec-gen embeds long prompt strings; keep the default rule set otherwise.
+ignore = ["E501"]

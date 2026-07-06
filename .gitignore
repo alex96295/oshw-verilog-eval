@@ -1,0 +1,18 @@
+# Secrets — never commit API keys
+key.cfg
+*.key
+.env
+
+# Generated benchmark output
+/out/
+
+# Python / uv
+.venv/
+__pycache__/
+*.pyc
+
+# Bender (compile- or download-to-use; not committed)
+/bender/
+/bender-x86_64-unknown-linux-gnu/
+*.tar.xz
+*.tar.xz.sha256

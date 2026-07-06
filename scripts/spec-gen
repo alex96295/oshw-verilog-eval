@@ -1,14 +1,38 @@
 #!/usr/bin/env python3
-import argparse, json, os, sys, re
-from typing import List, Tuple, Dict, Any, Optional
-from llama_index.core.base.llms.types import ChatMessage, MessageRole
-from mage.gen_config import get_llm, get_exp_setting, set_exp_setting
-from mage.log_utils import get_logger
-from mage.utils import reformat_json_string
-from mage.token_counter import TokenCounter
+"""Generate natural-language RTL specifications from reference SystemVerilog via an LLM.
 
-logger = get_logger(__name__)
-settings = get_exp_setting()
+Reads a (flattened) reference RTL file and produces a standalone specification document
+(Markdown + plain text) describing the module's external behavior, without leaking
+implementation details. Backed by litellm, so any provider (openai, anthropic, vertex,
+ollama, fireworks, ...) works through the same interface.
+
+Two modes:
+  * single : --rtl <file> --top <name> --out <file>
+  * batch  : --batch <jsonl>   (each line: {"top": ..., "rtl": ..., "out": ...})
+
+Batch mode runs all designs concurrently (asyncio) under a semaphore, so wall-clock time
+is roughly the slowest single design rather than the sum.
+"""
+import argparse
+import asyncio
+import json
+import os
+import re
+import sys
+from typing import Any, Dict, List, Optional, Tuple
+
+try:
+    import litellm
+    from litellm import acompletion
+except ImportError:  # pragma: no cover - friendly hint
+    sys.stderr.write(
+        "ERROR: litellm is not installed. Install project deps with `uv sync` "
+        "(or `pip install litellm`).\n"
+    )
+    raise
+
+# litellm is chatty by default; keep our stdout clean for the orchestrator.
+litellm.suppress_debug_info = True
 
 EXAMPLE_SPEC = """\
 I would like you to implement a module named TopModule with the following
@@ -99,120 +123,125 @@ to call the module. In the remainder, you describe what the module does
 (specifications), and when you refer to it, you always call it "TopModule".
 """
 
-JSON_SYSTEM_PROMPT = """You are an expert RTL interface summarizer.
-Your task is to read a SystemVerilog source file and output a STRICT JSON object ONLY
-(no markdown, no backticks, no prose) for the module whose name is provided
-in the user message. You must extract ONLY that module and ignore any others.
+# --- Optional quality/leakage review pass ---------------------------------------------
 
-Do not include implementation internals (FSM encodings, internal signals, pragmas).
-Output VALID JSON only. No comments. No trailing commas. Use basic types only.
+REVIEW_SYSTEM_PROMPT = """
+You are a meticulous reviewer of hardware specification documents. You are given the
+reference RTL a spec was derived from, and the spec itself. Judge the spec on two axes:
 
-JSON schema (exact keys):
-{
-  "module_name": "<string>",
-  "parameters": [
-    {
-      "name": "<string>",
-      "type": "<string or null>",
-      "default": "<string or null>"
-    }
-  ],
-  "ports": [
-    {
-      "name": "<string>",
-      "type": "logic" | "wire" | null,
-      "direction": "input" | "output" | "inout",
-      "signed": true | false,
-      "type_ref": "<string or null>",
-      "modport": "<string or null>",
-      "packed_dims": [
-        { "msb": "<string>", "lsb": "<string>" }
-      ],
-      "unpacked_dims": [
-        { "size": "<string>" }
-        or { "msb": "<string>", "lsb": "<string>" }
-      ]
-    }
-  ],
-  "description": {
-    "function": "<string>",
-    "protocols": "<string>"
-  },
-  "keywords": ["<string>", "..."]
+1) LEAKAGE: the spec must NOT reveal implementation details from the RTL — no internal
+   signal names, FSM state encodings, pipeline/stage counts, pragmas, or micro-architecture.
+   It should describe only externally observable behavior and the interface.
+2) COMPLETENESS: the spec must cover the full external interface (every port and
+   boundary-visible parameter) and the key behavior (reset, protocols/handshakes,
+   corner cases).
+
+Respond with STRICT JSON only (no prose, no backticks):
+{"ok": <true|false>, "issues": ["<short actionable issue>", ...]}
+Set "ok" to true only if there is no leakage AND the interface/behavior coverage is adequate.
+Keep each issue short and actionable. If ok is true, "issues" may be an empty list.
+"""
+
+REVIEW_USER_TEMPLATE = """
+### Reference RTL
+```systemverilog
+{rtl_text}
+```
+
+### Candidate specification
+{spec_md}
+
+Review the specification per the rules and return the STRICT JSON verdict.
+"""
+
+# ------------------------------------------------------------------------------------
+# Provider / key handling
+# ------------------------------------------------------------------------------------
+
+# Map our short provider names onto litellm's model-id prefixes.
+_PROVIDER_ALIASES = {
+    "vertex": "vertex_ai",
+    "fireworks": "fireworks_ai",
 }
 
-[RULES]
 
-1) Module selection
-- Extract only the module whose name exactly matches the user-provided module name (case-sensitive).
-- Ignore other modules, interfaces, packages, and all implementation internals.
+def load_key_cfg(path: str) -> None:
+    """Load a key.cfg file (lines like `OPENAI_API_KEY = 'xxx'`) into os.environ.
 
-2) Parameters
-- Include both value parameters (`parameter`) and type parameters (`parameter type`) from the module header. Include `localparam` only if it appears in the ANSI header list.
-- For value parameters:
-  - "name": identifier.
-  - "type": textual declared type if present (e.g., "int unsigned", "logic [7:0]"), else null.
-  - "default": exact textual default expression, else null.
-- For type parameters (`parameter type T = ...`):
-  - "name": identifier of the type parameter.
-  - "type": the literal string "type".
-  - "default": default type text (e.g., "logic [7:0]") or null if unspecified.
-- Preserve declaration order as written in the header.
+    Existing environment variables take precedence, so an already-exported key is not
+    overwritten. Missing file is not an error (env vars alone may suffice).
+    """
+    if not path or not os.path.isfile(path):
+        return
+    with open(path, "r", encoding="utf-8") as f:
+        for raw in f:
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip()
+            val = val.strip().strip("'").strip('"').strip()
+            if key and val and key not in os.environ:
+                os.environ[key] = val
+    # Convenience mapping for Vertex AI so the README's key.cfg keys keep working.
+    if "VERTEX_SERVICE_ACCOUNT_PATH" in os.environ and "GOOGLE_APPLICATION_CREDENTIALS" not in os.environ:
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = os.environ["VERTEX_SERVICE_ACCOUNT_PATH"]
+    if "VERTEX_REGION" in os.environ and "VERTEXAI_LOCATION" not in os.environ:
+        os.environ["VERTEXAI_LOCATION"] = os.environ["VERTEX_REGION"]
 
-3) Ports
-- Use ANSI-style information from the module header; if non-ANSI is used, merge direction/type/dims from subsequent declarations.
-- Split multi-declarators into separate entries (e.g., `input logic a, b;` ? two port objects).
-- "name": port identifier.
-- "direction": "input" | "output" | "inout" exactly as declared.
-- Determine kind vs reference:
-  - If declared with a built-in/net/var type, set "type" to "logic" (default for variables/unspecified/var/logic/reg) or "wire" (for explicit net types like wire/tri/uwire). Set "type_ref": null, "modport": null.
-  - If an interface instance: set "type": null, "type_ref" = interface name, "modport" = modport name or null.
-  - If a typedef is used (e.g., `my_t p`): set "type": null, "type_ref": "my_t", "modport": null.
-- "signed": true only if the declaration includes `signed`; false otherwise (applies to the packed element type).
-- Dimensions (verbatim, outermost?innermost):
-  - "packed_dims": one object per packed slice next to the type, each as { "msb": "<expr>", "lsb": "<expr>" }.
-  - "unpacked_dims": one object per dimension after the identifier; use { "size": "<expr>" } for `[N]` or { "msb": "<expr>", "lsb": "<expr>" } for `[M:L]`.
-- If no dimensions, both arrays are [].
-- Preserve port order.
 
-4) Text fidelity
-- Keep expressions verbatim strings; do not evaluate or simplify. Minimal whitespace normalization only (trim ends).
+def resolve_model_id(provider: str, model: str) -> str:
+    """Build a litellm model id like `openai/gpt-4o` from provider + model.
 
-5) Disambiguation
-- If kind is omitted in an input/output/inout declaration and it is variable-like, choose "logic".
-- If an explicit net type is used, choose "wire".
-- For interfaces, never place ranges in "packed_dims"; only "unpacked_dims" are allowed after the instance name.
-- If a typedef appears with ranges:
-  - If written as `my_t [N-1:0] p`, record "type_ref": "my_t" and put `[N-1:0]` into "packed_dims".
-  - If written as `my_t p [N]`, record "type_ref": "my_t" and put `[N]` into "unpacked_dims".
+    If `model` already carries a provider prefix, it is returned unchanged.
+    """
+    if "/" in model or not provider:
+        return model
+    prefix = _PROVIDER_ALIASES.get(provider.lower(), provider.lower())
+    return f"{prefix}/{model}"
 
-6) Description and keywords
-- "description.function": one concise sentence summarizing the module's purpose (from comments or reasonable inference).
-- "description.protocols": comma-separated protocol/bus names mentioned (e.g., "AXI4-Stream, APB"), or empty string.
-- "keywords": short, relevant terms (module role, buses, handshake signals). No duplicates.
 
-7) Output format
-- Output a single JSON object conforming exactly to the schema above.
-- No markdown, no backticks, no comments, no trailing commas.
-"""
+# ------------------------------------------------------------------------------------
+# Text utilities
+# ------------------------------------------------------------------------------------
 
-def _build_json_user_prompt_for_named_top(rtl_text: str, top_module_name: str) -> str:
-    return f"""
-Target top module name: {top_module_name}
+def count_tokens(model_id: str, text: str) -> int:
+    """Best-effort token count via litellm; falls back to a rough chars/4 estimate."""
+    try:
+        return litellm.token_counter(model=model_id, text=text)
+    except Exception:
+        return max(1, len(text) // 4)
 
-Extract ONLY the module with this exact name from the SystemVerilog text below.
-Ignore any other modules.
 
-Return a single JSON object following the exact schema described by the system message.
+def soft_trim(model_id: str, parts: List[Tuple[str, int]], budget: int) -> List[str]:
+    """Greedily trims the longest part by ~10% until within budget; each part keeps a reserve."""
+    import math
+    ss = [p for p, _ in parts]
+    rs = [r for _, r in parts]
+    cnts = [count_tokens(model_id, s) for s in ss]
+    if sum(cnts) <= budget:
+        return ss
+    MINC = 128
+    while sum(cnts) > budget:
+        i = max(range(len(cnts)), key=lambda k: cnts[k])
+        floor = max(rs[i], MINC)
+        if all(c <= max(r, MINC) for c, r in zip(cnts, rs)):
+            break
+        if cnts[i] <= floor:
+            cands = [k for k, c in enumerate(cnts) if c > max(rs[k], MINC)]
+            if not cands:
+                break
+            i = max(cands, key=lambda k: cnts[k])
+        new_len = max(floor, int(math.floor(cnts[i] * 0.9)))
+        ratio = new_len / max(cnts[i], 1)
+        cut = max(1, int(len(ss[i]) * ratio))
+        ss[i] = ss[i][:cut]
+        cnts[i] = count_tokens(model_id, ss[i])
+    return ss
 
-SystemVerilog file content starts below delimited by ===SV===
-===SV===
-{rtl_text}
-===SV===
-"""
 
 def md_to_txt(md: str) -> str:
-    """Tiny Markdown ? plain text cleaner (safe for LLM ingestion)."""
+    """Tiny Markdown -> plain text cleaner (safe for LLM ingestion)."""
     txt = md
     # strip fenced code blocks (keep their inner text)
     txt = re.sub(r"```[\s\S]*?```",
@@ -223,7 +252,7 @@ def md_to_txt(md: str) -> str:
     txt = txt.replace("**", "").replace("*", "")
     # inline code
     txt = txt.replace("`", "")
-    # links: [text](url) ? text (url)
+    # links: [text](url) -> text (url)
     txt = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1 (\2)", txt)
     # tables & blockquotes
     txt = txt.replace("|", " ")
@@ -232,202 +261,263 @@ def md_to_txt(md: str) -> str:
     txt = re.sub(r"\n{3,}", "\n\n", txt).strip()
     return txt
 
+
 def _read(path: str) -> str:
     with open(path, "r", encoding="utf-8", errors="replace") as f:
         return f.read()
 
-def _soft_trim(counter: TokenCounter, parts: List[Tuple[str,int]], budget: int) -> List[str]:
-    """Greedily trims longest part by ~10% until within budget; each part keeps at least its reserve."""
-    ss, rs = [p for p,_ in parts], [r for _,r in parts]
-    cnts = [counter.count(s) for s in ss]
-    if sum(cnts) <= budget: return ss
-    import math
-    MINC=128
-    while sum(cnts) > budget:
-        i = max(range(len(cnts)), key=lambda k: cnts[k])
-        floor = max(rs[i], MINC)
-        if all(c <= max(r, MINC) for c,r in zip(cnts,rs)): break
-        if cnts[i] <= floor:
-            cands=[k for k,c in enumerate(cnts) if c>max(rs[k],MINC)]
-            if not cands: break
-            i=max(cands, key=lambda k: cnts[k])
-        new_len=max(floor,int(math.floor(cnts[i]*0.9)))
-        ratio=new_len/max(cnts[i],1)
-        cut=max(1,int(len(ss[i])*ratio))
-        ss[i]=ss[i][:cut]; cnts[i]=counter.count(ss[i])
-    return ss
 
-def _validate_and_optionally_fix_json_with_llm(history: List[ChatMessage],
-                                               llm,
-                                               max_trials: int = 3) -> Dict[str, Any]:
-    local_tc = TokenCounter(llm)
-    #local_tc.set_tpm_limit(32000)
-    local_tc.set_cur_tag("RTL_JSON_Spec")
-    response = None
-    for _ in range(max_trials):
-        response, _cnt = local_tc.count_chat(history, llm=llm)
-        raw = (response.message.content or "").strip()
-        try:
-            return json.loads(raw, strict=False)
-        except json.decoder.JSONDecodeError as e:
-            err = ChatMessage(
-                role=MessageRole.USER,
-                content=f"Json Decode Error: {str(e)}\\n"
-                        f"Please return ONLY valid JSON per the schema. "
-                        f"No prose, no backticks, no comments."
-            )
-            history.extend([response.message, err])
-    raise ValueError(f"Json Decode Error when decoding: {response.message.content if response else '(no response)'}")
+def _usage_tokens(resp: Any) -> Tuple[int, int]:
+    """Extract (in_tokens, out_tokens) from a litellm response, tolerant of shape."""
+    try:
+        u = resp.usage
+        return int(getattr(u, "prompt_tokens", 0) or 0), int(getattr(u, "completion_tokens", 0) or 0)
+    except Exception:
+        return 0, 0
 
-def generate_rtl_json_spec(llm,
-                           rtl_path: str,
-                           rtl_text: str,
-                           top_module_name: str,
-                           out_path: Optional[str] = None,
-                           max_trials: int = 3) -> str:
-    sys_msg = ChatMessage(role=MessageRole.SYSTEM, content=JSON_SYSTEM_PROMPT)
-    user_msg = ChatMessage(role=MessageRole.USER,
-                           content=_build_json_user_prompt_for_named_top(rtl_text, top_module_name))
-    history: List[ChatMessage] = [sys_msg, user_msg]
-    json_obj = _validate_and_optionally_fix_json_with_llm(history, llm, max_trials=max_trials)
 
-    pattern = re.compile(
-        rf"\bmodule\s+{re.escape(top_module_name)}\b[\s\S]*?\bendmodule\b",
-        re.MULTILINE
+def _content(resp: Any) -> str:
+    try:
+        return (resp.choices[0].message.content or "").strip()
+    except Exception:
+        return ""
+
+
+# ------------------------------------------------------------------------------------
+# Core generation (async)
+# ------------------------------------------------------------------------------------
+
+class SpecConfig:
+    """Shared, immutable LLM/config for all designs in a run."""
+
+    def __init__(self, provider: str, model: str, max_token: int, tokens: int,
+                 temperature: float, top_p: float, review: bool):
+        self.provider = provider
+        self.model = model
+        self.model_id = resolve_model_id(provider, model)
+        self.max_token = max_token
+        self.tokens = tokens
+        self.temperature = temperature
+        self.top_p = top_p
+        self.review = review
+
+    async def _chat(self, messages: List[Dict[str, str]]) -> Any:
+        return await acompletion(
+            model=self.model_id,
+            messages=messages,
+            temperature=self.temperature,
+            top_p=self.top_p,
+            max_tokens=self.max_token,
+        )
+
+
+def _build_spec_messages(cfg: SpecConfig, top: str, rtl_txt: str,
+                         extra_feedback: Optional[str] = None) -> List[Dict[str, str]]:
+    user_raw = USER_RTL_PROMPT_TEMPLATE.format(
+        target_name=top, example_spec=EXAMPLE_SPEC, rtl_text="{{RTL_PLACEHOLDER}}"
     )
-    match = pattern.search(rtl_text)
-    if match:
-        reuse_code = match.group(0)
-    else:
-        logger.warning(f"Top module {top_module_name} not found in RTL text; using full RTL for reuse.")
-        reuse_code = rtl_text
+    static = user_raw.replace("{{RTL_PLACEHOLDER}}", "")
+    reserve = 3000
+    rem = max(cfg.tokens - reserve, 2000)
+    trimmed = soft_trim(cfg.model_id, [(static, 2000), (rtl_txt, rem)], cfg.tokens)
+    user_final = user_raw.replace("{{RTL_PLACEHOLDER}}", trimmed[1])
+    if extra_feedback:
+        user_final += (
+            "\n\n[REVISION REQUESTED]\nA reviewer found the following issues with a "
+            "previous draft. Fix all of them in this revision:\n" + extra_feedback
+        )
+    return [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": user_final},
+    ]
 
-    content_entry = {
-        "consult": rtl_text,   # full file
-        "reuse": reuse_code    # only top module
+
+async def _review_spec(cfg: SpecConfig, rtl_txt: str, spec_md: str) -> Tuple[bool, List[str], Tuple[int, int]]:
+    """Run the leakage/completeness review pass. Returns (ok, issues, (in_tok, out_tok))."""
+    # Trim RTL to keep the review prompt within budget too.
+    trimmed = soft_trim(cfg.model_id, [(spec_md, 4000), (rtl_txt, max(cfg.tokens - 6000, 2000))], cfg.tokens)
+    messages = [
+        {"role": "system", "content": REVIEW_SYSTEM_PROMPT},
+        {"role": "user", "content": REVIEW_USER_TEMPLATE.format(rtl_text=trimmed[1], spec_md=trimmed[0])},
+    ]
+    resp = await cfg._chat(messages)
+    it, ot = _usage_tokens(resp)
+    raw = _content(resp)
+    # Be forgiving: extract the first JSON object if the model wrapped it.
+    m = re.search(r"\{[\s\S]*\}", raw)
+    if m:
+        raw = m.group(0)
+    try:
+        verdict = json.loads(raw)
+        ok = bool(verdict.get("ok", False))
+        issues = [str(x) for x in verdict.get("issues", []) if str(x).strip()]
+        return ok, issues, (it, ot)
+    except Exception:
+        # If the reviewer misbehaves, don't block generation — accept the spec.
+        return True, [], (it, ot)
+
+
+async def generate_spec(cfg: SpecConfig, top: str, rtl_path: str, out_base: str,
+                        sem: asyncio.Semaphore) -> Dict[str, Any]:
+    """Generate spec .md/.txt for one design. Returns a result/usage record."""
+    out_dir = os.path.dirname(os.path.abspath(out_base)) or "."
+    base = os.path.splitext(os.path.basename(out_base))[0]
+    out_md = os.path.join(out_dir, base + ".md")
+    out_txt = os.path.join(out_dir, base + ".txt")
+
+    result: Dict[str, Any] = {"top": top, "rtl": rtl_path, "md": out_md, "txt": out_txt,
+                              "ok": False, "in_tokens": 0, "out_tokens": 0}
+    async with sem:
+        try:
+            if not os.path.isfile(rtl_path):
+                raise FileNotFoundError(f"RTL file not found: {rtl_path}")
+            rtl_txt = _read(rtl_path)
+            os.makedirs(out_dir, exist_ok=True)
+
+            in_tok = out_tok = 0
+
+            # First draft.
+            resp = await cfg._chat(_build_spec_messages(cfg, top, rtl_txt))
+            spec_md = _content(resp)
+            it, ot = _usage_tokens(resp)
+            in_tok += it
+            out_tok += ot
+
+            # Optional review + single regeneration.
+            if cfg.review and spec_md:
+                ok, issues, (rit, rot) = await _review_spec(cfg, rtl_txt, spec_md)
+                in_tok += rit
+                out_tok += rot
+                if not ok and issues:
+                    resp2 = await cfg._chat(
+                        _build_spec_messages(cfg, top, rtl_txt, extra_feedback="\n".join(f"- {i}" for i in issues))
+                    )
+                    revised = _content(resp2)
+                    it2, ot2 = _usage_tokens(resp2)
+                    in_tok += it2
+                    out_tok += ot2
+                    if revised:
+                        spec_md = revised
+
+            if not spec_md:
+                raise RuntimeError("LLM returned an empty specification")
+
+            with open(out_md, "w", encoding="utf-8") as f:
+                f.write(spec_md + ("" if spec_md.endswith("\n") else "\n"))
+            spec_txt = md_to_txt(spec_md)
+            with open(out_txt, "w", encoding="utf-8") as f:
+                f.write(spec_txt + ("" if spec_txt.endswith("\n") else "\n"))
+
+            result.update(ok=True, in_tokens=in_tok, out_tokens=out_tok)
+        except Exception as e:  # per-design isolation
+            result["error"] = f"{type(e).__name__}: {e}"
+        return result
+
+
+def _write_usage(out_base: str, cfg: SpecConfig, records: List[Dict[str, Any]]) -> None:
+    """Write a .usage.json next to the (first) output base with aggregate stats."""
+    in_tok = sum(r.get("in_tokens", 0) for r in records)
+    out_tok = sum(r.get("out_tokens", 0) for r in records)
+    stats: Dict[str, Any] = {
+        "model": cfg.model_id,
+        "provider": cfg.provider,
+        "designs": len(records),
+        "ok": sum(1 for r in records if r.get("ok")),
+        "failed": sum(1 for r in records if not r.get("ok")),
+        "in_tokens": in_tok,
+        "out_tokens": out_tok,
     }
+    try:
+        cost = litellm.cost_per_token(model=cfg.model_id, prompt_tokens=in_tok, completion_tokens=out_tok)
+        stats["estimated_usd"] = round(sum(cost), 6)
+    except Exception:
+        pass
+    usage_path = os.path.splitext(out_base)[0] + ".usage.json"
+    with open(usage_path, "w", encoding="utf-8") as f:
+        json.dump(stats, f, indent=2)
 
-    if isinstance(json_obj, dict):
-        if "keywords" in json_obj:
-            reordered = {}
-            for k, v in json_obj.items():
-                reordered[k] = v
-                if k == "keywords":
-                    reordered["content"] = content_entry
-            json_obj = reordered
-        else:
-            json_obj["content"] = content_entry
-    else:
-        # Fallback: ensure we still emit a dict with the RTL source
-        json_obj = {
-            "extracted": json_obj,
-            "content": content_entry,
-        }
 
-    if out_path is None:
-        base_dir = os.path.dirname(os.path.abspath(rtl_path))
-        base_name = os.path.splitext(os.path.basename(rtl_path))[0]
-        out_path = os.path.join(base_dir, f"{base_name}.module.json")
+# ------------------------------------------------------------------------------------
+# Entry points
+# ------------------------------------------------------------------------------------
 
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(json_obj, f, indent=2)
+async def _run(cfg: SpecConfig, designs: List[Dict[str, str]], concurrency: int) -> List[Dict[str, Any]]:
+    sem = asyncio.Semaphore(max(1, concurrency))
+    tasks = [generate_spec(cfg, d["top"], d["rtl"], d["out"], sem) for d in designs]
+    return await asyncio.gather(*tasks)
 
-    return out_path
 
-def main():
-    ap = argparse.ArgumentParser(description="Generate a spec (Markdown) from tb.sv + rtl_golden.sv via LLM, no implementation leakage.")
-    ap.add_argument("--rtl", required=True, help="Path to the reference RTL file (SystemVerilog)")
-    ap.add_argument("--top", required=True, help="Explicit top-level module name (in RTL) for JSON extraction")
-    ap.add_argument("--out", default="spec.md", help="Output filename (default: spec.md)")
-    ap.add_argument("--provider", default="openai", help="LLM provider (e.g. openai, anthropic, vertex, etc.)")
+def _load_batch(path: str) -> List[Dict[str, str]]:
+    designs: List[Dict[str, str]] = []
+    with open(path, "r", encoding="utf-8") as f:
+        for ln, raw in enumerate(f, 1):
+            raw = raw.strip()
+            if not raw:
+                continue
+            obj = json.loads(raw)
+            for k in ("top", "rtl", "out"):
+                if k not in obj:
+                    raise ValueError(f"{path}:{ln}: batch entry missing '{k}'")
+            designs.append({"top": obj["top"], "rtl": obj["rtl"], "out": obj["out"]})
+    return designs
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        description="Generate an RTL specification (Markdown + text) from reference RTL via an LLM."
+    )
+    ap.add_argument("--rtl", help="Path to the reference RTL file (single mode)")
+    ap.add_argument("--top", help="Top-level module name (single mode)")
+    ap.add_argument("--out", default="spec.md", help="Output base filename (single mode; default: spec.md)")
+    ap.add_argument("--batch", help="Path to a JSONL worklist ({top,rtl,out} per line); enables batch mode")
+    ap.add_argument("--concurrency", type=int, default=8, help="Max concurrent LLM requests (default: 8)")
+    ap.add_argument("--provider", default="openai", help="LLM provider (openai, anthropic, vertex, ollama, ...)")
     ap.add_argument("--model", default="gpt-4o-2024-08-06", help="LLM model name")
-    ap.add_argument("--key-cfg-path", default="./key.cfg", help="Path to API keys configuration file")
+    ap.add_argument("--key-cfg", "--key-cfg-path", dest="key_cfg", default="./key.cfg",
+                    help="Path to API keys configuration file")
     ap.add_argument("--max-token", type=int, default=8192, help="Maximum tokens per LLM response")
     ap.add_argument("--tokens", type=int, default=12000, help="Total token budget for prompt+inputs")
     ap.add_argument("--temperature", type=float, default=0.85, help="LLM sampling temperature")
     ap.add_argument("--top-p", type=float, default=0.95, help="LLM nucleus sampling parameter")
-    ap.add_argument("--tag", default="spec_gen", help="Tag for token counter logging")
-    ap.add_argument("--emit", choices=["bench", "lib", "all"], default="all", help="Artifacts to emit: bench (md/txt), lib (json), or all (default).")
+    review = ap.add_mutually_exclusive_group()
+    review.add_argument("--review", dest="review", action="store_true", default=True,
+                        help="Run the leakage/completeness review pass (default: on)")
+    review.add_argument("--no-review", dest="review", action="store_false",
+                        help="Disable the review pass")
     args = ap.parse_args()
 
-    emit = args.emit
-    gen_bench = emit in ("bench", "all")
-    gen_lib = emit in ("lib", "all")
+    load_key_cfg(args.key_cfg)
 
-    out_dir = os.path.dirname(os.path.abspath(args.out)) or "."
-    os.makedirs(out_dir, exist_ok=True)
-    base = os.path.splitext(os.path.basename(args.out))[0]
-    out_md = os.path.join(out_dir, base + ".md")
-    out_txt = os.path.join(out_dir, base + ".txt")
-    out_json = os.path.join(out_dir, base + ".json")
+    cfg = SpecConfig(
+        provider=args.provider, model=args.model, max_token=args.max_token, tokens=args.tokens,
+        temperature=args.temperature, top_p=args.top_p, review=args.review,
+    )
 
-    if not os.path.isfile(args.rtl):
-        print("RTL file not found.", file=sys.stderr); sys.exit(1)
-
-    set_exp_setting(temperature=args.temperature, top_p=args.top_p)
-    llm = get_llm(model=args.model, cfg_path=args.key_cfg_path, max_token=args.max_token,
-                  provider=args.provider, temperature=args.temperature)
-
-    tc = TokenCounter(llm); tc.set_cur_tag(args.tag)
-    rtl_txt = _read(args.rtl)
-
-    if gen_bench:
-        sys_msg = ChatMessage(role=MessageRole.SYSTEM, content=SYSTEM_PROMPT)
-        user_raw = USER_RTL_PROMPT_TEMPLATE.format(
-            target_name=args.top, example_spec=EXAMPLE_SPEC, rtl_text="{{RTL_PLACEHOLDER}}"
-        )
-        static = user_raw.replace("{{RTL_PLACEHOLDER}}", "")
-        reserve = 3000
-        rem = max(args.tokens - reserve, 2000)
-        trimmed = _soft_trim(tc, [(static, 2000), (rtl_txt, rem)], args.tokens)
-        user_final = user_raw.replace("{{RTL_PLACEHOLDER}}", trimmed[1])
-
-        user_msg = ChatMessage(role=MessageRole.USER, content=user_final)
-        resp, cnt = tc.count_chat([sys_msg, user_msg], llm=llm)
-        spec_md = (resp.message.content or "").strip()
-        try:
-            spec_md = reformat_json_string(spec_md)
-        except Exception:
-            pass
-
-        os.makedirs(out_dir, exist_ok=True)
-        with open(out_md, "w", encoding="utf-8") as f:
-            f.write(spec_md + ("" if spec_md.endswith("\n") else "\n"))
-        spec_txt = md_to_txt(spec_md)
-        with open(out_txt, "w", encoding="utf-8") as f:
-            f.write(spec_txt + ("" if spec_txt.endswith("\n") else "\n"))
+    if args.batch:
+        designs = _load_batch(args.batch)
+        out_base = designs[0]["out"] if designs else args.out
     else:
-        cnt = None  # no spec LLM call in lib-only mode
+        if not args.rtl or not args.top:
+            ap.error("single mode requires --rtl and --top (or use --batch)")
+        designs = [{"top": args.top, "rtl": args.rtl, "out": args.out}]
+        out_base = args.out
 
-    json_out_path = None
-    if gen_lib:
-        os.makedirs(out_dir, exist_ok=True)  # ensure dir exists for json-only too
-        json_out_path = generate_rtl_json_spec(
-            llm=llm,
-            rtl_path=args.rtl,
-            rtl_text=rtl_txt,
-            top_module_name=args.top,
-            out_path=out_json
-        )
+    if not designs:
+        sys.stderr.write("No designs to process.\n")
+        return 0
 
-    stats = {"model": llm.metadata.model_name, "provider": args.provider}
-    if cnt is not None:
-        stats.update({"in_tokens": cnt.in_token_cnt, "out_tokens": cnt.out_token_cnt})
-        try:
-            cost = tc.token_cost
-            stats["estimated_usd"] = round(
-                cnt.in_token_cnt * cost.in_token_cost_per_token +
-                cnt.out_token_cnt * cost.out_token_cost_per_token, 6
-            )
-        except Exception:
-            pass
-    with open(os.path.splitext(args.out)[0] + ".usage.json", "w", encoding="utf-8") as f:
-        json.dump(stats, f, indent=2)
+    records = asyncio.run(_run(cfg, designs, args.concurrency))
+    _write_usage(out_base, cfg, records)
 
-    if cnt is not None:
-        logger.info(f"Usage: in {cnt.in_token_cnt} tokens, out {cnt.out_token_cnt} tokens")
-        if "estimated_usd" in stats:
-            logger.info(f"Estimated cost: ${stats['estimated_usd']:.4f}")
+    ok = [r for r in records if r.get("ok")]
+    failed = [r for r in records if not r.get("ok")]
+    for r in failed:
+        sys.stderr.write(f"[spec-gen] FAILED {r['top']} ({r['rtl']}): {r.get('error')}\n")
+    sys.stderr.write(f"[spec-gen] {len(ok)} ok / {len(failed)} failed "
+                     f"({sum(r.get('in_tokens', 0) for r in records)} in, "
+                     f"{sum(r.get('out_tokens', 0) for r in records)} out tokens)\n")
+    return 1 if failed else 0
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

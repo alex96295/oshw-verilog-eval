@@ -3,8 +3,9 @@ key.cfg
 *.key
 .env
 
-# Generated benchmark output
-/out/
+# Benchmark output is tracked (the specs are hand-authored, not cheaply regenerable);
+# ignore only transient run artifacts under it.
+/out/**/*.usage.json
 
 # Python / uv
 .venv/

@@ -1,0 +1,51 @@
+Design a module called TopModule. This module is a multi-bit-encoded (MuBi) Boolean synchronizer that safely transfers a redundantly-encoded 4-bit True/False value across clock domains.
+
+## Overview
+
+TopModule implements a fault-resistant synchronizer for the MuBi4 encoding scheme, which represents Boolean values using complementary 4-bit patterns for inherent fault detection. The module includes clock-domain synchronization (via pipelined flip-flops) and optional stability checking. MuBi4True is encoded as `4'h6` and MuBi4False as `4'h9` (bitwise complements). The module has a clock, reset, and configurable synchronization behavior.
+
+## Parameters
+
+| Parameter | Type | Default | Meaning |
+|-----------|------|---------|---------|
+| `NumCopies` | int | 1 | Number of independent buffered output copies of the synchronized value. Must be > 0. |
+| `AsyncOn` | bit | 1 | If 1, enables asynchronous clock-domain crossing via 2-stage flip-flop synchronizer. If 0, no synchronization stages (passthrough with buffer). |
+| `StabilityCheck` | bit | 0 | If 1 (and `AsyncOn == 1`), adds a 3rd flip-flop stage and logic to detect input instability and force reset value on unstable transitions. |
+| `ResetValue` | mubi4_t | MuBi4False | The MuBi4 value (encoded) to hold on reset. |
+
+## Interface
+
+| Port | Direction | Width | Description |
+|------|-----------|-------|-------------|
+| `clk_i` | input | 1 | Clock. |
+| `rst_ni` | input | 1 | Active-low reset. |
+| `mubi_i` | input | 4 | Input MuBi4 value (4-bit encoded: `4'h6` for True, `4'h9` for False, others invalid). |
+| `mubi_o` | output | 4 x NumCopies | Synchronized output, replicated NumCopies times. Each copy is 4 bits wide. |
+
+## Behavioral requirements
+
+- **MuBi4 encoding.** Input and output use the MuBi4 encoding: `4'h6` (binary 0110) represents True, `4'h9` (binary 1001) represents False. These are bitwise complements. Other values are invalid but may be present due to transient errors.
+- **Synchronization.** When `AsyncOn == 1`, the input is synchronized through a 2-stage flip-flop chain (prim_flop_2sync) to safely cross the clock domain. When `AsyncOn == 0`, the input bypasses synchronization flops (combinational passthrough within the clock domain).
+- **Reset behavior.** On `rst_ni == 0`, all synchronized outputs assume `ResetValue`.
+- **Multiple copies.** `mubi_o` is an array of `NumCopies` copies, all driven by the same synchronized signal, for replicated logic paths.
+- **Stability check.** When `StabilityCheck == 1` and `AsyncOn == 1`:
+  - A 3rd synchronization flop stage is added.
+  - If the synchronized value changes between the 2nd and 3rd stage (detected via XOR), the output is forced to `ResetValue` as a safeguard against metastability or clock-domain violation.
+  - Normally (no instability), the output reflects the stable 3rd-stage value.
+- **Buffering.** Each output copy is individually buffered (via `prim_buf` or `prim_sec_anchor_buf` depending on `StabilityCheck`).
+
+## Timing / latency
+
+- **Without synchronization** (`AsyncOn == 0`): combinational; output responds immediately to input.
+- **With synchronization** (`AsyncOn == 1`, no stability check): 3 clock cycles from input change to output stable (2 synchronization flops + internal buffering).
+- **With synchronization + stability check** (`AsyncOn == 1`, `StabilityCheck == 1`): 4 clock cycles; additional cycle for stability observation.
+
+## Reset behavior
+
+- On `rst_ni` deassertion, all outputs transition to `ResetValue` within 3–4 cycles (depending on synchronization stages).
+
+## Example
+
+With `NumCopies = 2`, `AsyncOn = 1`, `StabilityCheck = 0`, `ResetValue = MuBi4False`:
+
+After 3 cycles of `mubi_i == 4'h6` (True), `mubi_o[0]` and `mubi_o[1]` both become `4'h6`. The value is replicated identically to both copies.

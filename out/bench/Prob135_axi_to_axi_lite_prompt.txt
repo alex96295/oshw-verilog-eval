@@ -1,0 +1,51 @@
+Design a module called TopModule. This module is a protocol converter that transforms full AXI4 transactions into AXI4-Lite transactions by decomposing multi-beat bursts into a sequence of single-beat operations.
+
+Overview
+
+TopModule is an AXI4-to-AXI4-Lite converter. It accepts standard AXI4 transactions (which may contain multi-beat bursts with ID, length > 0, user signals, and atomic operations) on a slave port and converts them into a series of AXI4-Lite transactions (single-beat, no IDs, no user, no atomics, length=0) on a master port. Each AXI4 burst is decomposed: a burst with length N becomes N individual AXI4-Lite transactions. Responses are collected and reconstructed to maintain the AXI4 interface on the slave side.
+
+Parameters
+
+  Parameter   Meaning  
+ ----------- --------- 
+  AxiAddrWidth, AxiDataWidth, AxiIdWidth, AxiUserWidth   AXI4 bus widths.  
+  AxiMaxWriteTxns, AxiMaxReadTxns   Maximum outstanding write/read bursts.  
+  FullBW   If 1, assume full bandwidth available (data width unchanged); if 0, may introduce cycles per beat.  
+  FallThrough   Register slice behavior (fall-through mode).  
+  full_req_t, full_resp_t   AXI4 request/response struct types.  
+  lite_req_t, lite_resp_t   AXI4-Lite request/response struct types.  
+
+Interface
+
+  Port   Direction   Type   Description  
+ ------ ----------- ------ ------------- 
+  clk_i   input   -   Clock.  
+  rst_ni   input   -   Active-low reset.  
+  test_i   input   -   Test mode signal (optional).  
+  slv_req_i   input   full_req_t   AXI4 request from master: may contain multi-beat bursts.  
+  slv_resp_o   output   full_resp_t   AXI4 response to master: B and R responses, reconstructed to match burst boundaries.  
+  mst_req_o   output   lite_req_t   AXI4-Lite request to slave: single-beat transactions decomposed from the AXI4 bursts.  
+  mst_resp_i   input   lite_resp_t   AXI4-Lite response from slave.  
+
+Behavioral requirements
+
+- Burst decomposition. A write address with length N is decomposed into N sequential write-address-only transactions on the AXI4-Lite slave, each with a single-beat address. The corresponding write data (W channel) is sent beat-by-beat, one per cycle per AXI4-Lite address.
+- Address calculation. For each beat i (0 to length), the address is calculated from the starting address, size, and burst type (INCR, FIXED, WRAP) using standard AXI4 burst address calculation.
+- ID tracking. The converter tracks the original ID and beat count internally. Responses from AXI4-Lite are collected and reassembled into the appropriate B/R responses with the original ID.
+- Multi-beat response. Read data (R) responses from the slave are collected; the last R beat (corresponding to the last beat of the original burst) has last=1. Write response (B) is generated once all data has been written.
+- Atomics not supported. If an atomic operation (ATOP) is requested, behavior is undefined or an error is generated; AXI4-Lite does not support atomic operations.
+- User signals dropped. AXI4-Lite has no user fields; user signals from AXI4 are dropped.
+- Reset behavior. On reset, internal burst tracking state is cleared.
+
+Throughput and latency
+
+- Latency. Depends on the number of beats in the burst. A burst of length N introduces at least N cycles of latency.
+- Throughput. Bounded by the AXI4-Lite slave's per-beat throughput.
+
+Clock and reset domains
+
+Single clock domain.
+
+Example behavior
+
+A master sends an AXI4 write burst: AW with ID=5, address=0x1000, length=3 (4 beats), size=2 (4 bytes), burst=INCR. The converter generates four AXI4-Lite AW transactions: addresses 0x1000, 0x1004, 0x1008, 0x100C. The W channel delivers 4 beats of data (one per cycle). When all four beats have been written, a single B response with ID=5 is sent back to the master.

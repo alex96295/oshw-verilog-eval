@@ -1,0 +1,84 @@
+Design a module called TopModule. This module is a hardened up/down counter with duplicate redundancy for error detection.
+
+## Overview
+
+TopModule is a configurable up/down counter with built-in redundancy: it maintains two copies of the counter (one normal, one inverted/complemented) and continuously checks that they sum to a known value. If a mismatch is detected (due to bit flips or corruption), an error signal is asserted. The module supports clear, set, increment, and decrement operations, with staged commit logic for transactional updates.
+
+## Parameters
+
+| Parameter | Meaning | Default |
+|-----------|---------|---------|
+| `Width` | Width of the counter value, in bits. | 2 |
+| `ResetValue` | Value to which the counter resets (0 to 2^Width-1). | 0 |
+| `EnableAlertTriggerSVA` | When 1, enable SVA-based error signaling. | 1 |
+| `PossibleActions` | Bit mask indicating which operations (Clear, Set, Incr, Decr) are allowed. | All enabled |
+
+## Interface
+
+| Port | Direction | Width | Description |
+|------|-----------|-------|-------------|
+| `clk_i` | input | 1 | System clock. |
+| `rst_ni` | input | 1 | Asynchronous active-low reset. |
+| `clr_i` | input | 1 | Clear: when high, reset counter to ResetValue. |
+| `set_i` | input | 1 | Set: when high and committed, set counter to set_cnt_i. |
+| `set_cnt_i` | input | Width | Value to set (used when set_i is high). |
+| `incr_en_i` | input | 1 | Increment enable: when high, add step_i to counter. |
+| `decr_en_i` | input | 1 | Decrement enable: when high, subtract step_i from counter. |
+| `step_i` | input | Width | Step/delta value for increment or decrement. |
+| `commit_i` | input | 1 | Commit: latches pending changes into the actual counter state. |
+| `cnt_o` | output | Width | Current counter value (updated on commit). |
+| `cnt_after_commit_o` | output | Width | Value the counter will have after the next commit (speculative next value). |
+| `err_o` | output | 1 | Error: asserted when redundancy check fails (both counters do not sum correctly). |
+
+## Behavioral requirements
+
+### Counter Operations
+- **Clear (`clr_i`).** When `clr_i` is high on any cycle, the counter is reset to `ResetValue` on the next clock edge (when committed).
+- **Set (`set_i`).** When `set_i` is high and committed, the counter is set to `set_cnt_i`.
+- **Increment (`incr_en_i`).** When `incr_en_i` is high (and not decr_en_i), the counter increments by `step_i`. Overflow saturates at the maximum value (all ones).
+- **Decrement (`decr_en_i`).** When `decr_en_i` is high (and not incr_en_i), the counter decrements by `step_i`. Underflow saturates at zero.
+- **Simultaneous Increment/Decrement (`incr_en_i && decr_en_i`).** Counter does not change (increment and decrement cancel).
+
+### Commit Semantics
+- The module uses a two-stage update pipeline: a speculative pending value and the committed (latched) counter state.
+- `cnt_after_commit_o` shows what `cnt_o` will become if `commit_i` is asserted on the current cycle.
+- On `commit_i`, the pending update becomes the new latched state.
+- Without `commit_i`, the latched state does not change.
+
+### Dual-Path Redundancy
+- Internally, the module maintains two independent copies of the counter to detect bit flips and corruption.
+- One copy holds the normal counter value; the other holds the bitwise inverted complement.
+- After each update, both copies are updated in parallel.
+- The error check continuously verifies that the two copies are bitwise complements of each other.
+- If this invariant is violated, `err_o` is asserted immediately.
+
+### Error Detection
+- If the redundancy check fails (counters do not match), `err_o` is asserted.
+- `err_o` is latched and remains asserted until reset.
+- The error signal is updated on every clock cycle, so a single-cycle error is captured.
+
+### Saturation Behavior
+- When incrementing at maximum count, the counter stays at max (does not wrap).
+- When decrementing at zero, the counter stays at zero (does not wrap negative).
+
+### Unused Operation Prevention
+- If `PossibleActions` disallows an operation (e.g., Clear bit not set), assertions ensure that operation never appears on the input.
+- This allows optimizations and reduces implementation complexity for restricted modes.
+
+### Reset
+- On `rst_ni` assertion (active low), both internal counters are reset to their initial values, and `err_o` is cleared.
+
+## Example
+
+With `Width = 4`, `ResetValue = 2`:
+
+| Cycle | `clr_i` | `set_i` | `set_cnt_i` | `incr_en_i` | `decr_en_i` | `step_i` | `commit_i` | `cnt_o` | `cnt_after_commit_o` | `err_o` | Notes |
+|-------|---------|---------|---|---|---|---|---|---|---|---|---|
+| 0 | 0 | 0 | — | 0 | 0 | — | 0 | 2 | 2 | 0 | Initial state after reset |
+| 1 | 0 | 0 | — | 1 | 0 | 3 | 0 | 2 | 5 | 0 | Increment pending by 3, but not committed |
+| 2 | 0 | 0 | — | 0 | 0 | — | 1 | 5 | 5 | 0 | Commit the pending increment |
+| 3 | 0 | 0 | — | 1 | 0 | 1 | 1 | 6 | 7 | 0 | Increment and commit in same cycle |
+| 4 | 0 | 1 | 10 | 0 | 0 | — | 1 | 10 | 10 | 0 | Set to 10 and commit |
+| 5 | 1 | 0 | — | 0 | 0 | — | 1 | 2 | 2 | 0 | Clear and commit back to ResetValue |
+
+On each cycle, both redundant counters are updated; if they mismatch, `err_o` asserts immediately and latches.

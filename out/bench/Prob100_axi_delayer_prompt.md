@@ -1,0 +1,98 @@
+Design a module called TopModule. This module implements an AXI4 handshake delayer that injects
+configurable or randomized delays on valid/ready handshakes across all five AXI4 channels. It is
+primarily a verification and testing aid to exercise protocol-correct behavior under adverse timing
+conditions.
+
+## Overview
+
+TopModule sits between an upstream AXI4 slave and a downstream AXI4 master. For each of the five
+AXI4 channels (AW, W, B, AR, R), the module inserts a configurable or random delay into the
+valid/ready handshake path. When a transaction attempts to flow through a channel, the module can
+delay either the valid signal (making the downstream master wait longer to see new data) or the ready
+signal (making the upstream slave wait longer to send data), or both. Delays can be fixed (same delay
+every cycle) or randomized (uniformly distributed up to a maximum). All data passes through unchanged,
+but handshake timing is altered for stress-testing purposes.
+
+## Parameters
+
+| Parameter | Meaning |
+|-----------|---------|
+| `aw_chan_t` | Struct type for the AXI write-address channel. |
+| `w_chan_t` | Struct type for the AXI write-data channel. |
+| `b_chan_t` | Struct type for the AXI write-response channel. |
+| `ar_chan_t` | Struct type for the AXI read-address channel. |
+| `r_chan_t` | Struct type for the AXI read-data channel. |
+| `axi_req_t` | Struct type defining the complete AXI request. |
+| `axi_resp_t` | Struct type defining the complete AXI response. |
+| `StallAwValid` | Maximum number of cycles to delay AW valid signals (0 = no delay). |
+| `StallAwReady` | Maximum number of cycles to delay AW ready signals. |
+| `StallWValid` | Maximum number of cycles to delay W valid signals. |
+| `StallWReady` | Maximum number of cycles to delay W ready signals. |
+| `StallBValid` | Maximum number of cycles to delay B valid signals. |
+| `StallBReady` | Maximum number of cycles to delay B ready signals. |
+| `StallArValid` | Maximum number of cycles to delay AR valid signals. |
+| `StallArReady` | Maximum number of cycles to delay AR ready signals. |
+| `StallRValid` | Maximum number of cycles to delay R valid signals. |
+| `StallRReady` | Maximum number of cycles to delay R ready signals. |
+| `FixedDelay` | If true, use fixed delays (Stall*Valid/Ready values). If false, randomize delays (uniformly 0 to Stall* values). |
+
+## Interface
+
+| Port | Direction | Type | Description |
+|------|-----------|------|-------------|
+| `clk_i` | input | logic | Clock signal. |
+| `rst_ni` | input | logic | Asynchronous active-low reset. |
+| `slv_req_i` | input | `axi_req_t` | AXI4 request from the upstream slave. |
+| `slv_resp_o` | output | `axi_resp_t` | AXI4 response to the upstream slave. |
+| `mst_req_o` | output | `axi_req_t` | AXI4 request to the downstream master. All data payload is identical to `slv_req_i`, but valid/ready may be delayed. |
+| `mst_resp_i` | input | `axi_resp_t` | AXI4 response from the downstream master. All data is identical, but ready/valid may be delayed. |
+
+## Behavioral requirements
+
+- **Transparent data path.** All AXI4 data signals (aw_chan, w_chan, ar_chan, b_chan, r_chan) pass
+  through to the master/slave unchanged. Only valid/ready signals are delayed; no data corruption occurs.
+
+- **Per-channel, per-direction delay.** Each of the ten delay parameters controls delay on a specific
+  direction of a specific channel. For example, `StallAwValid` delays the AW valid path, while
+  `StallAwReady` delays the AW ready path independently.
+
+- **Fixed delay mode** (FixedDelay=1): Each delay parameter specifies a constant number of cycles
+  to hold the signal low. For example, if `StallAwValid=3`, the AW valid signal is held low for 3 cycles
+  after the upstream slave asserts `slv_req_i.aw_valid`.
+
+- **Random delay mode** (FixedDelay=0): Each delay parameter specifies the maximum delay. On every cycle
+  where the delay is active, a random value (uniformly distributed from 0 to the max) is chosen. This
+  requires a pseudo-random number generator or LFSR.
+
+- **Delay mechanism.** Conceptually, the module maintains a delay counter for each direction of each
+  channel. When a signal transitions (e.g., valid goes from 0 to 1), the delay counter is loaded. While
+  the counter is nonzero, the output signal is held low. When the counter expires, the signal is released.
+  If the input signal is released before the delay expires, the delay counter is stopped/cancelled.
+
+- **Handshake-based delay.** Delays are applied only when the signal is "active" (valid means the slave
+  is trying to send, ready means the master is trying to accept). Combining delays on both valid and ready
+  on the same channel can lead to significant transactions delays (both sides forced to wait).
+
+- **Reset behavior.** On `rst_ni` assertion, all delay counters reset to zero and all outputs mirror
+  their inputs (no delays active).
+
+- **Randomization seed/state.** If using random delays, the module must maintain an LFSR or PRNG state
+  that is reset on `rst_ni` and evolves each cycle.
+
+## Clock and reset domains
+
+- Single clock domain: `clk_i` and `rst_ni`.
+
+## Example behavior
+
+1. **Fixed delay on AW valid, 3 cycles.** Upstream slave sends AW_valid=1 on cycle 0.
+   - Cycle 0: Delay counter is loaded with 3. Output AW_valid held at 0.
+   - Cycle 1–2: Delay counter decrements. Output still 0.
+   - Cycle 3: Delay counter reaches 0. Output AW_valid released to 1.
+   - Master sees AW_valid 3 cycles later than the slave sent it.
+
+2. **Random delay on W ready, max 5 cycles.** Downstream master sends W_ready=1 on cycle N.
+   - A random value (0–5) is chosen, e.g., 4. Delay counter is loaded.
+   - Cycles N to N+3: Output W_ready held at 0.
+   - Cycle N+4: Output W_ready released to 1.
+   - Upstream slave sees W_ready with a randomized delay.

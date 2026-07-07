@@ -1,0 +1,147 @@
+Design a module called TopModule. This module is a Cryptographically Secure Random Number Generator (CSRNG) implementing NIST SP 800-90A CTR_DRBG (Counter DRBG) with application-level command/response interfaces, hardware and software entropy sources, and dual interrupt and alert signaling.
+
+Overview
+
+TopModule provides deterministic random number generation seeded from an entropy source, supporting the NIST SP 800-90A specification. It accepts application commands (instantiate, reseed, generate) on hardware or software ports, outputs generated random bits, and interfaces with an entropy source block for entropy input. The module is lifecycle- and debug-gated via OTP and life-cycle signals, exposing a TL-UL register interface for configuration and software-driven command/status access.
+
+Parameters
+
+  Parameter   Meaning  
+ ----------- --------- 
+  SBoxImpl   AES S-box implementation variant (for the internal AES cipher used in CTR_DRBG).  
+  NumHwApps   Number of hardware application ports (default NumApps - 1).  
+  AlertAsyncOn   Per-alert async/sync mode selector.  
+  AlertSkewCycles   Alert propagation delay in cycles.  
+  RndCnstCsKeymgrDiv   Random constants for keymgr-division separation.  
+
+Interface
+
+Clocks & Resets
+- clk_i: Main clock (input, 1-bit).
+- rst_ni: Active-low asynchronous reset (input, 1-bit).
+
+TL-UL Register Bus
+- tl_i (input): TL-UL host-to-device request (32-bit address, 32-bit write data, valid, etc.).
+- tl_o (output): TL-UL device-to-host response (32-bit read data, valid, error).
+
+Registers control DRBG instantiation, reseed, and generate commands; provide status; and allow software-driven random number access.
+
+Entropy Source Interface
+- entropy_src_hw_if_o (output): CSRNG request to entropy source (entropy request flag).
+- entropy_src_hw_if_i (input): Entropy source response (entropy bus with validity/FIPS indicator).
+
+Handshake: CSRNG asserts es_req, entropy source responds with es_ack and entropy bits; CSRNG de-asserts es_req.
+
+Hardware Application Ports (NumHwApps instances)
+- csrng_cmd_i[i] (input): Command from hardware app i (request valid, command opcode, app data).
+- csrng_cmd_o[i] (output): Response to hardware app i (ready, ack, status, generated random bits, FIPS indicator).
+
+Each port implements a valid/ready handshake. Commands are instantiate, reseed, or generate. Responses include acknowledgment, status, and (for generate) random bits.
+
+Software Application (via TL-UL)
+- Software submits commands and reads responses through the TL-UL register interface (COMMAND, STATUS, GENBITS registers).
+
+Lifecycle & OTP Gates
+- otp_en_csrng_sw_app_read_i (input): OTP enable for software app read access; if disabled, software cannot read generated bits.
+- lc_hw_debug_en_i (input): Life-cycle signal enabling hardware debug/test features.
+
+Interrupts
+- intr_cs_cmd_req_done_o (output): Asserted when a command request completes (instantiate/reseed/generate done).
+- intr_cs_entropy_req_o (output): Asserted when entropy is requested from the entropy source.
+- intr_cs_hw_inst_exc_o (output): Asserted on hardware instantiation exception (e.g., invalid state transition).
+- intr_cs_fatal_err_o (output): Asserted on fatal errors (e.g., counter overflow, FSM corruption).
+
+Alerts
+- alert_tx_o[NumAlerts-1:0] (output): Alert transmit (differential; NumAlerts typically 2: recovery and fatal).
+- alert_rx_i[NumAlerts-1:0] (input): Alert acknowledge/ping (differential).
+
+Behavioral Requirements
+
+NIST SP 800-90A CTR_DRBG State Machine
+TopModule maintains an internal DRBG state (key, counter, reseed counter) and implements the following operations:
+
+Instantiate
+- Accepts entropy and optional personalization string as input.
+- Initializes the key and counter to deterministic values derived from the entropy.
+- Sets the reseed counter to zero.
+- Must precede any generate or reseed command; invalid if already instantiated.
+- Signals intr_cs_cmd_req_done_o upon completion.
+
+Reseed
+- Accepts new entropy and optional additional input.
+- Updates the key and counter using the new entropy.
+- Resets the reseed counter to zero.
+- Valid only after instantiation; invalid otherwise (triggers intr_cs_hw_inst_exc_o).
+- Signals intr_cs_cmd_req_done_o upon completion.
+
+Generate
+- Outputs pseudorandom bits (128, 256, or 384 bits per request, configurable).
+- Increments the reseed counter.
+- After reseed counter reaches a threshold (typically 2^48 calls), forces a reseed (returns status indicating reseed required).
+- Signals intr_cs_cmd_req_done_o upon completion; output bits and FIPS flag are in response.
+
+Hardware Application Command Handshake
+1. Hardware app asserts csrng_cmd_i[i].csrng_req_valid and provides command opcode and data.
+2. TopModule asserts csrng_cmd_o[i].csrng_req_ready when ready to accept the command.
+3. On the next cycle, hardware app can de-assert csrng_req_valid or submit the next command.
+4. TopModule processes the command asynchronously and asserts csrng_cmd_o[i].csrng_rsp_ack with status and (for generate) random bits.
+5. Hardware app asserts csrng_cmd_i[i].csrng_rsp_ready to acknowledge the response and allow the next command.
+
+Software Application via Registers
+- Software writes COMMAND register with opcode (instantiate/reseed/generate) and optional data (personalization or additional input).
+- Software reads STATUS register to poll for completion (command done flag).
+- For generate requests, software reads GENBITS register(s) to retrieve the pseudorandom output.
+- Interrupt intr_cs_cmd_req_done_o signals completion.
+
+Entropy Request & Sourcing
+- During instantiate or reseed, TopModule requests entropy by asserting entropy_src_hw_if_o.es_req.
+- Entropy source responds with entropy_src_hw_if_i.es_ack and entropy bus.
+- TopModule consumes entropy bits asynchronously and de-asserts es_req when sufficient entropy is obtained.
+- Interrupt intr_cs_entropy_req_o may pulse on entropy request.
+
+Error & Exception Handling
+- Invalid State Transitions: If a generate or reseed is requested before instantiation, intr_cs_hw_inst_exc_o is asserted.
+- Reseed Threshold: If reseed counter exceeds limit, generate commands return a status indicating reseed is required; further generate calls are blocked until reseed completes.
+- Entropy Timeout: If entropy source does not respond within a timeout, intr_cs_fatal_err_o is asserted.
+- Counter Corruption / FSM Errors: Internal errors (e.g., counter overflow, FSM state violations) trigger intr_cs_fatal_err_o and a fatal alert.
+
+Reset Behavior
+- On reset, internal state (key, counter) is cleared.
+- All pending commands are discarded; both hardware and software app ports return to idle.
+- Interrupts and alerts are cleared.
+
+Lifecycle & Debug Gating
+- OTP Enable: If otp_en_csrng_sw_app_read_i is disabled, the software app cannot read generated random bits; STATUS still reports completion, but GENBITS reads return zero.
+- Debug Enable: If lc_hw_debug_en_i indicates debug is off, hardware app instantiate commands may be blocked or logged as an exception.
+
+Output Characteristics
+- Generated bits are pseudorandom with no detectable bias (per NIST 800-90A).
+- FIPS indicator (genbits_fips) indicates whether the output passed FIPS health checks (typically a post-generation cryptographic check).
+
+Boundary Parameters & Constraints
+- Reseed Threshold: Typically 2^48; configurable via parameter.
+- Block Cipher: AES-256 (assumed); key size 256 bits, block size 128 bits.
+- Output Length: Per generate request, typically 128, 256, or 384 bits (configurable, up to 2^19 bits).
+- Entropy Length: Typically 256-384 bits per instantiate/reseed (spec-dependent).
+- Personalization & Additional Input: Optional, up to several hundred bits.
+
+Synchronization & Timing
+- All logic is synchronous to clk_i.
+- Hardware app command acceptance and response are pipelined; typical latency from command acceptance to response is on the order of tens to hundreds of cycles (DRBG operation and entropy sourcing).
+- Software app via registers is also synchronous; TL-UL register writes and reads are single-cycle.
+
+Example Scenario
+
+1. Software writes COMMAND register with opcode=INSTANTIATE, personalization data via another register.
+2. TopModule requests entropy from entropy source, waits for response.
+3. TopModule derives key and counter from entropy + personalization.
+4. TopModule asserts intr_cs_cmd_req_done_o.
+5. Software reads STATUS register to confirm instantiation complete.
+6. Hardware app 0 asserts csrng_cmd_i[0] with opcode=GENERATE, length=256 bits.
+7. TopModule accepts command, processes it, generates 256 bits.
+8. TopModule asserts csrng_cmd_o[0].csrng_rsp_ack with generated bits and FIPS flag.
+9. Hardware app acknowledges response; loop repeats for next command.
+
+Alert Conditions
+- Recovery Alert: Non-fatal issues (e.g., invalid command from disabled app, entropy quality flags). Logged and reported but does not halt operation.
+- Fatal Alert: Counters exceed thresholds, FSM detects error, or entropy source fails. Halts DRBG operation; requires reset recovery.

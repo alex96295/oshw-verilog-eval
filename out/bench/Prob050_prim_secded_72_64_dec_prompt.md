@@ -1,0 +1,49 @@
+Design a module called TopModule. This module is a combinational SECDED (Single Error Correction, Double Error Detection) decoder using Hsiao parity codes to decode 72-bit codewords back to 64-bit data, with error reporting.
+
+## Overview
+
+TopModule implements a Hsiao-code SECDED decoder for fault-tolerant storage or transmission. It takes a 72-bit codeword (64 data bits plus 8 parity bits) and produces 64 bits of corrected data, an 8-bit syndrome, and a 2-bit error status. The module is purely combinational — there is no clock, no reset, and no state. The decoding and error correction are deterministic and single-cycle.
+
+## Parameters
+
+None.
+
+## Interface
+
+All ports are combinational; there is no clock or reset.
+
+| Port        | Direction | Width | Description |
+|-------------|-----------|-------|-------------|
+| `data_i`    | input     | 72    | Encoded 72-bit codeword: 64 data bits and 8 parity bits. |
+| `data_o`    | output    | 64    | Corrected 64-bit output data. Automatically flips the single erroneous bit if a single error is detected. |
+| `syndrome_o`| output    | 8     | Computed 8-bit syndrome. Zero syndrome indicates no error; nonzero values identify the error bit position (if single error). |
+| `err_o`     | output    | 2     | Error status: `err_o[0]` is the parity bit (odd parity = 1 indicates error); `err_o[1]` is 1 iff a correctable single error is detected (syndrome nonzero and parity odd). |
+
+## Behavioral requirements
+
+- **SECDED decoding.** The module implements the Hsiao linear code (inverse) to compute the syndrome from the 72-bit input. Each syndrome bit is a linear combination (XOR) of specific codeword bits.
+- **Error correction.** For each of the 64 data bits, if the syndrome exactly equals a specific 8-bit value (the "syndrome value" unique to that bit), that bit is flipped in the output. Otherwise, the output bit is unchanged from the input.
+- **Error status.** `err_o[0]` (parity bit) is 1 if the overall parity (XOR of all 72 bits) is odd, indicating an error; `err_o[1]` is 1 if `syndrome != 8'h00` AND `err_o[0] == 1` (single-error-correctable case).
+- **Deterministic computation.** `data_o`, `syndrome_o`, and `err_o` are purely combinational and respond immediately to changes in `data_i` with no latency.
+
+## Boundary conditions
+
+- **No error.** If `data_i` is a valid codeword with no bit errors, `syndrome_o == 8'h00` and `err_o == 2'b00`; `data_o[i]` equals the original data bit.
+- **Single bit error.** If exactly one bit of a valid codeword is flipped, `syndrome_o` is nonzero (identifying the error position), `err_o[0] == 1` (parity indicates error), and `err_o[1] == 1` (correctable error). `data_o` is the corrected 64 bits.
+- **Double bit error.** If exactly two bits are flipped, `syndrome_o` is nonzero but `err_o[0] == 0` (parity does not indicate error), so `err_o[1] == 0` (error detected but uncorrectable). `data_o` is not reliable.
+
+## Example
+
+With `data_i = 72'h0_00000000_00000000` (valid encoding of all-zero 64-bit data):
+
+| Signal | Value |
+|--------|-------|
+| `syndrome_o` | 8'h00 |
+| `err_o` | 2'b00 |
+
+With `data_i = 72'h1_00000000_00000000` (bit 64 flipped):
+
+| Signal | Value |
+|--------|-------|
+| `syndrome_o` | 8'h01 (or specific nonzero value identifying bit 64) |
+| `err_o` | 2'b11 (correctable single error) |

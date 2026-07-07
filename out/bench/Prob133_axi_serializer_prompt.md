@@ -1,0 +1,47 @@
+Design a module called TopModule. This module enforces in-order transaction execution by serializing outstanding AXI4 transactions, allowing only one transaction ID to be active at a time.
+
+## Overview
+
+TopModule is an AXI4 serializer. It accepts AXI4 transactions on a slave port and forwards them to a master port, but with the restriction that only one transaction ID can have outstanding requests at any time. This is useful for endpoints that cannot handle out-of-order responses or for enforcing strict ordering requirements. The module tracks which ID has the outstanding request and blocks new requests with different IDs until all beats of the current ID have completed.
+
+## Parameters
+
+| Parameter | Meaning |
+|-----------|---------|
+| `MaxReadTxns` | Maximum number of outstanding read transactions (typically 1 for serialization). |
+| `MaxWriteTxns` | Maximum number of outstanding write transactions (typically 1 for serialization). |
+| `AxiIdWidth` | Width of the AXI4 ID field. |
+| `axi_req_t` | Type of AXI4 request struct. |
+| `axi_resp_t` | Type of AXI4 response struct. |
+
+## Interface
+
+| Port | Direction | Type | Description |
+|------|-----------|------|-------------|
+| `clk_i` | input | - | Clock. |
+| `rst_ni` | input | - | Active-low reset. |
+| `slv_req_i` | input | `axi_req_t` | AXI4 request from master: AW/W and AR channels. |
+| `slv_resp_o` | output | `axi_resp_t` | AXI4 response to master: B/R channels. |
+| `mst_req_o` | output | `axi_req_t` | AXI4 request to slave: same as slave request, but gated to enforce serialization. |
+| `mst_resp_i` | input | `axi_resp_t` | AXI4 response from slave. |
+
+## Behavioral requirements
+
+- **Single ID active.** At any time, at most one transaction ID is allowed to have a pending write address (AW) or read address (AR). When a request with ID X is accepted, subsequent requests with ID Y (where Y != X) are blocked until all transactions for ID X complete (B response received for writes, R last received for reads).
+- **Write ordering.** Write data (W) must follow the associated AW with the same ID. The serializer does not reorder W beats; they are forwarded as-is once the ID has won arbitration.
+- **Read ordering.** Read data (R) is ordered by response matching. The serializer does not block based on read data ordering; it trusts the slave to order R beats correctly.
+- **Handshaking.** Ready signals are asserted only when the request can proceed (either it belongs to the active ID, or no ID is currently active and this ID can become active).
+- **Reset behavior.** On reset, the active ID is cleared and all pending transactions are abandoned.
+
+## Throughput and latency
+
+- **Latency.** Zero additional latency (serialization check is combinational).
+- **Throughput.** Limited to one transaction ID at a time; once a transaction completes, the next queued ID can proceed.
+
+## Clock and reset domains
+
+Single clock domain.
+
+## Example behavior
+
+Master sends write address with ID=0, followed by read address with ID=1. The write address is accepted immediately. The read address is stalled at the slave input (not forwarded) until the write address is fully completed (AW accepted, W accepted, B response received). Then, the read address is accepted and forwarded.

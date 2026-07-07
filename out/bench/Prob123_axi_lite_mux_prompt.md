@@ -1,0 +1,114 @@
+Design a module called TopModule. This module is a many-to-one multiplexer for AXI4-Lite: it takes N independent AXI4-Lite slave ports (upstream) and routes transactions to a single AXI4-Lite master port (downstream), arbitrating when multiple slaves request access.
+
+## Overview
+
+TopModule acts as an AXI4-Lite N-to-1 mux, combining multiple upstream AXI4-Lite masters into a single downstream AXI4-Lite interface. It includes arbitration logic (typically round-robin or priority-based) to ensure fair access when multiple masters contend for the shared downstream port. Requests are routed based on valid signals; responses are routed back to the requesting master based on stored source tracking. This module is complementary to a demux and enables multiple AXI4-Lite masters to share a single slave port.
+
+## Parameters
+
+| Parameter | Meaning | Constraint |
+|-----------|---------|------------|
+| `NoSlvPorts` | Number of upstream AXI4-Lite slave ports. | ≥ 1. |
+| `AxiAddrWidth` | Width of the AXI4-Lite address field, in bits. | ≥ 1. |
+| `AxiDataWidth` | Width of the AXI4-Lite data field, in bits. | ≥ 8. |
+| `aw_chan_t`, `w_chan_t`, `b_chan_t`, `ar_chan_t`, `r_chan_t` | Struct types for AXI4-Lite channels. | User-supplied. |
+
+## Interface
+
+### Clock and Reset
+- `clk_i`: input, clock.
+- `rst_ni`: input, active-low asynchronous reset.
+
+### Slave Ports (Upstream; array indexed `[0:NoSlvPorts-1]`)
+For each upstream AXI4-Lite master port:
+
+- `slv_aw_chans_i`: input, array of `aw_chan_t`. Address write channels.
+- `slv_aw_valids_i`: input, array of logic. Valid flags for address write.
+- `slv_aw_readies_o`: output, array of logic. Ready flags for address write.
+
+- `slv_w_chans_i`: input, array of `w_chan_t`. Write data channels.
+- `slv_w_valids_i`: input, array of logic. Valid flags for write data.
+- `slv_w_readies_o`: output, array of logic. Ready flags for write data.
+
+- `slv_b_chans_o`: output, array of `b_chan_t`. Write response channels.
+- `slv_b_valids_o`: output, array of logic. Valid flags for write response.
+- `slv_b_readies_i`: input, array of logic. Ready flags for write response.
+
+- `slv_ar_chans_i`: input, array of `ar_chan_t`. Address read channels.
+- `slv_ar_valids_i`: input, array of logic. Valid flags for address read.
+- `slv_ar_readies_o`: output, array of logic. Ready flags for address read.
+
+- `slv_r_chans_o`: output, array of `r_chan_t`. Read data channels.
+- `slv_r_valids_o`: output, array of logic. Valid flags for read data.
+- `slv_r_readies_i`: input, array of logic. Ready flags for read data.
+
+### Master Port (Downstream; Single Output)
+- `mst_aw_chan_o`: output, `aw_chan_t`. Address write channel (multiplexed).
+- `mst_aw_valid_o`: output, logic. Valid flag for address write.
+- `mst_aw_ready_i`: input, logic. Ready flag for address write.
+
+- `mst_w_chan_o`: output, `w_chan_t`. Write data channel (multiplexed).
+- `mst_w_valid_o`: output, logic. Valid flag for write data.
+- `mst_w_ready_i`: input, logic. Ready flag for write data.
+
+- `mst_b_chan_i`: input, `b_chan_t`. Write response channel.
+- `mst_b_valid_i`: input, logic. Valid flag for write response.
+- `mst_b_ready_o`: output, logic. Ready flag for write response.
+
+- `mst_ar_chan_o`: output, `ar_chan_t`. Address read channel (multiplexed).
+- `mst_ar_valid_o`: output, logic. Valid flag for address read.
+- `mst_ar_ready_i`: input, logic. Ready flag for address read.
+
+- `mst_r_chan_i`: input, `r_chan_t`. Read data channel.
+- `mst_r_valid_i`: input, logic. Valid flag for read data.
+- `mst_r_ready_o`: output, logic. Ready flag for read data.
+
+## Behavioral Requirements
+
+- **Multiplexing / Arbitration (Address Channels).** For each address channel (AW and AR), the module arbitrates among the upstream slave ports using a fair arbitration scheme (typically round-robin):
+  - One master at a time is granted access to the downstream port.
+  - Granted master's request is forwarded; ungranteed masters see ready = 0.
+  - Arbitration priority rotates on each handshake or at a fixed interval.
+
+- **Master ID Tracking.** When a request is forwarded to the master port, the module stores the source slave port index (or a tag) so responses can be routed back correctly.
+
+- **Write Path Arbitration.** AW and W channels are arbitrated independently (as per AXI4-Lite spec). The module ensures that AW and W from the same master are eventually delivered to the downstream port, though not necessarily consecutively.
+
+- **Read Path Arbitration.** AR requests are arbitrated. R responses are routed back to the requesting master based on stored tags or source tracking.
+
+- **Response Routing.** B responses from the downstream port are routed back to the upstream master that issued the corresponding AW. R responses are routed back to the master that issued the AR. The module maintains sufficient state to perform this routing (typically via a FIFO or counter per port).
+
+- **Backpressure.** When the downstream master is not ready, all upstream slaves see ready = 0 for the respective channel, causing them to stall.
+
+- **Error Responses.** If a write address or read address has no corresponding AW/AR pending (e.g., due to a protocol violation), the module may return an error response (SLVERR) to the offending port.
+
+- **Fairness.** No upstream master is indefinitely starved. Round-robin or weighted arbitration ensures all masters eventually get access.
+
+- **Reset.** On release from reset (`rst_ni` assertion), all state (arbitration pointers, tags, pending requests) is cleared and no transactions are in flight.
+
+## Throughput and Latency
+
+- **Throughput:** One transaction per clock cycle on the downstream port, distributed among upstream masters per arbitration.
+- **Latency:** Minimal arbitration delay (combinational or 1 cycle); dependent on downstream latency.
+
+## Clock and Reset Domains
+
+- All ports operate in the same `clk_i` domain.
+- Reset is asynchronous (`rst_ni`, active low).
+
+## Example Behavior
+
+Assume 3 upstream masters (ports 0, 1, 2):
+
+1. Master 0 and Master 1 issue AW requests simultaneously:
+   - Arbitration selects Master 0 (round-robin or priority).
+   - Master 0's AW is forwarded; Master 1 sees AW ready = 0.
+
+2. Master 0's AW is accepted (handshake). Master 1 is now granted in the next arbitration round.
+   - Master 1's AW is forwarded next cycle.
+
+3. B response from downstream returns with data. Module routes it to Master 0 (based on stored tag).
+
+4. Multiple AR requests: arbitration selects one at a time; R responses routed back accordingly.
+
+The module enables multiplexing of multiple AXI4-Lite initiators onto a single target, with fair arbitration and correct response routing.

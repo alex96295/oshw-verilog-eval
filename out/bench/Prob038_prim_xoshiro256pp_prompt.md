@@ -1,0 +1,59 @@
+Design a module called TopModule. This module implements the xoshiro256++ pseudo-random number generator, a high-performance cryptographic PRNG based on the xoshiro family of algorithms.
+
+## Overview
+
+TopModule is a 256-bit xoshiro256++ PRNG. It maintains a 256-bit internal state (four 64-bit words) and produces a 64-bit (or wider, based on `OutputDw`) pseudo-random output on each clock cycle. The state is updated according to the xoshiro256++ state-update function, which applies linear transformations and rotations. The module detects lockup (all-zero state) and can be seeded with a 256-bit value or injected with entropy.
+
+## Parameters
+
+| Parameter | Meaning | Constraint |
+|-----------|---------|------------|
+| `OutputDw` | Width of the output, in bits. | Typically 64; must be divisible by 64. `NumStages = OutputDw / 64` determines unrolling. |
+| `DefaultSeed` | Default initialization state. | 256 bits; should not be all-zero. |
+
+## Interface
+
+TopModule operates in a single clock domain with an active-low asynchronous reset.
+
+| Port | Direction | Width | Description |
+|------|-----------|-------|-------------|
+| `clk_i` | input | 1 | System clock. |
+| `rst_ni` | input | 1 | Active-low asynchronous reset. |
+| `seed_en_i` | input | 1 | Seed enable: when asserted, `seed_i` loads into the state on the next clock edge. |
+| `seed_i` | input | 256 | Seed value for state initialization. |
+| `xoshiro_en_i` | input | 1 | PRNG enable: when asserted, advance the state on the next clock edge. |
+| `entropy_i` | input | 256 | Entropy value XORed into the next state (optional dithering). |
+| `data_o` | output | `OutputDw` | Pseudo-random output. For `OutputDw = 64`, a single 64-bit value; for larger `OutputDw`, concatenated values from multiple unrolled stages. |
+| `all_zero_o` | output | 1 | Lockup detection: asserted if the internal state is all-zero. |
+
+## Behavioral requirements
+
+- **State update.** The internal 256-bit state comprises four 64-bit words: `[a, b, c, d]`. On each enabled cycle, the state is updated as:
+  - `a_new = a ⊕ b ⊕ d`
+  - `b_new = a ⊕ b ⊕ c`
+  - `c_new = a ⊕ (b << 17) ⊕ c`
+  - `d_new = ROTL(d, 45) ⊕ ROTL(b, 45)` (rotate left)
+- **Output generation.** The output is derived combinationally from the state via an unrolled pipeline. For `OutputDw = 64`, it computes: `output = ROTL(a + d, 41) + a` from the current state. For `OutputDw > 64`, the state is unrolled `NumStages` times through the update function, with each stage producing its own 64-bit output; these are concatenated.
+- **Seeding.** When `seed_en_i` is asserted, `seed_i` loads into the state on the next clock edge, overriding normal operation.
+- **Entropy injection.** When `xoshiro_en_i` is asserted (and `seed_en_i` is not), the updated state is XORed with `entropy_i` before latching.
+- **Lockup protection.** If the state becomes all-zero, `all_zero_o` is asserted. On the next enabled cycle when `all_zero_o` is true, the state resets to `DefaultSeed` instead of advancing normally.
+- **Reset behavior.** On reset (`rst_ni` low), the state initializes to `DefaultSeed`, and `all_zero_o` is deasserted.
+- **Hold behavior.** When both `seed_en_i` and `xoshiro_en_i` are low, the state remains unchanged (no update occurs on the next clock edge).
+
+## Clock and Reset Domains
+
+- Single synchronous clock domain (`clk_i`).
+- Asynchronous active-low reset (`rst_ni`).
+
+## Example
+
+With `OutputDw = 64`, `DefaultSeed = 256'h1`:
+
+| Cycle | `seed_en_i` | `xoshiro_en_i` | `entropy_i` | Event | `data_o` | `all_zero_o` |
+|-------|-----------|--------------|-----------|-------|---------|------------|
+| Reset | — | — | — | Initialization | (from DefaultSeed) | 0 |
+| 0 | 0 | 1 | `256'h0` | Advance state | (output from state) | 0 |
+| 1 | 0 | 1 | `256'h0` | Advance state | (next output) | 0 |
+| 2 | 1 | 0 | × | Load seed | (seed output) | 0 |
+
+The `data_o` remains combinationally dependent on the current internal state. When `xoshiro_en_i` is asserted, the state advances and `data_o` reflects the output of the newly computed state on the following cycle.

@@ -1,0 +1,95 @@
+Design a module called TopModule. This module is a UART (Universal Asynchronous Receiver/Transmitter)
+controller: it provides configurable serial communication with separate TX and RX FIFOs, baud rate
+control via NCO, loopback mode, and rich interrupt support.
+
+## Overview
+
+TopModule is a full-featured UART controller suitable for console I/O and low-speed serial
+communication. It implements independent transmit (TX) and receive (RX) paths with separate FIFOs,
+a numerically-controlled oscillator (NCO) for baud rate generation, and configurable frame format
+(data bits, stop bits, parity). The module provides a TileLink register interface for configuration
+and FIFO access. Interrupts signal FIFO watermarks, overflow, parity/frame errors, and timeouts.
+Loopback mode connects TX output to RX input for testing. The module supports lifecycle gating,
+alert reporting, and RACL policies for register access.
+
+## Parameters
+
+| Parameter | Meaning | Constraint |
+|-----------|---------|------------|
+| `AlertAsyncOn` | Alert asynchronous enable mask. | Width `NumAlerts`. |
+| `AlertSkewCycles` | Clock cycles of alert timing skew. | Typically 1. |
+| `EnableRacl` | Enable role-based access control. | 0 = disabled, 1 = enabled. |
+| `RaclErrorRsp` | RACL error response mode. | Defaults to `EnableRacl`. |
+| `RaclPolicySelVec` | RACL policy selection per register. | Array of `top_racl_pkg::racl_policy_sel_t`. |
+
+## Interface
+
+| Port | Direction | Width | Description |
+|------|-----------|-------|-------------|
+| `clk_i` | input | 1 | System clock for register interface and data synchronization. |
+| `rst_ni` | input | 1 | Active-low asynchronous reset. |
+| `tl_i` | input | `tlul_h2d_t` | TileLink host-to-device for register and FIFO access. |
+| `tl_o` | output | `tlul_d2h_t` | TileLink device-to-host for register responses. |
+| `alert_rx_i` | input | `alert_rx_t[NumAlerts-1:0]` | Alert RX array. |
+| `alert_tx_o` | output | `alert_tx_t[NumAlerts-1:0]` | Alert TX array. |
+| `racl_policies_i` | input | `top_racl_pkg::racl_policy_vec_t` | Lifecycle role-access policies. |
+| `racl_error_o` | output | `top_racl_pkg::racl_error_log_t` | RACL access violation log. |
+| `lsio_trigger_o` | output | 1 | Trigger output for LSIO (low-speed I/O) event detection. |
+| `cio_rx_i` | input | 1 | Serial RX input; external serial data line. |
+| `cio_tx_o` | output | 1 | Serial TX output; external serial data line. |
+| `cio_tx_en_o` | output | 1 | Serial TX output enable; tri-state control for TX driver. |
+| `intr_tx_watermark_o` | output | 1 | TX FIFO watermark interrupt; asserted when TX FIFO level falls below programmed watermark. |
+| `intr_tx_empty_o` | output | 1 | TX FIFO empty interrupt; asserted when TX FIFO becomes empty. |
+| `intr_rx_watermark_o` | output | 1 | RX FIFO watermark interrupt; asserted when RX FIFO level exceeds programmed watermark. |
+| `intr_tx_done_o` | output | 1 | TX done interrupt; asserted when all TX data has been transmitted. |
+| `intr_rx_overflow_o` | output | 1 | RX overflow interrupt; asserted when RX FIFO overflows (new byte arrives when full). |
+| `intr_rx_frame_err_o` | output | 1 | RX frame error interrupt; asserted when stop bit is not detected. |
+| `intr_rx_break_err_o` | output | 1 | RX break error interrupt; asserted when RX line held low beyond normal frame time. |
+| `intr_rx_timeout_o` | output | 1 | RX timeout interrupt; asserted when no RX activity for a programmed duration. |
+| `intr_rx_parity_err_o` | output | 1 | RX parity error interrupt; asserted when received parity bit does not match computed parity. |
+
+## Behavioral requirements
+
+- **Register interface.** All configuration and FIFO access is via TileLink registers. Key registers include:
+  - Baud rate control (NCO divisor).
+  - Frame format (data bits, stop bits, parity enable/type).
+  - FIFO watermark thresholds.
+  - Interrupt enable/status.
+  - Control bits (loopback, reset, enable).
+
+- **TX FIFO and transmission.** Data written to the TX FIFO via TileLink register is transmitted serially. The NCO generates a baud clock; at each bit time, one bit is shifted out. The TX signal idles high; a start bit (low) begins each frame, followed by data bits, optional parity, and stop bit(s). After all stop bits, the line returns to idle.
+
+- **RX FIFO and reception.** The RX input is sampled at 16x the baud rate (via NCO). Data is synchronized and oversampled to detect start bit, center all data bits, and check stop bit. Received bytes (including parity if enabled) are buffered in the RX FIFO. Errors detected during reception are logged as separate bits in the FIFO or as status flags.
+
+- **Baud rate control via NCO.** The baud rate is set via a 16-bit or 32-bit NCO (numerically-controlled oscillator) divisor register. The NCO accumulator increments every system clock cycle; when it overflows, a baud clock tick is generated. This allows arbitrary baud rates by adjusting the divisor.
+
+- **Frame format.** Configurable field sizes:
+  - Data bits: 5, 6, 7, or 8 bits.
+  - Stop bits: 1 or 2 bits.
+  - Parity: disabled, odd, or even (one bit, computed over data bits).
+
+- **Error detection.** Frame errors (missing stop bit), parity errors (computed parity != received bit), and break errors (RX held low) are detected and reported via separate interrupt signals.
+
+- **RX overflow.** If the RX FIFO is full and a new byte is received, the oldest byte is overwritten (or new byte is discarded). Overflow interrupt is asserted.
+
+- **RX timeout.** If no bytes are received for a programmed timeout duration, `intr_rx_timeout_o` is asserted. This allows software to detect end-of-message without explicit framing.
+
+- **Loopback mode.** When enabled, the TX output is internally routed to the RX input, allowing self-test of the transmitter and receiver without external serial connection.
+
+- **FIFO watermarks.** TX watermark triggers when TX FIFO falls below a threshold (requesting more data). RX watermark triggers when RX FIFO rises above a threshold (indicating data ready to read).
+
+- **Interrupts.** Multiple interrupt sources allow software to poll or handle TX/RX events independently.
+
+## Example
+
+Configure UART for 115200 baud, 8N1 (8 data, no parity, 1 stop) on a 50 MHz clock:
+- Baud clock frequency: 115200 Hz.
+- System clock frequency: 50 MHz = 50,000,000 Hz.
+- NCO divisor = 50,000,000 / 115200 ≈ 434.
+- Write divisor register with 434.
+- Write control register: data_bits=8, stop_bits=1, parity=disabled, enable=1.
+- To transmit 'A' (0x41): write 0x41 to TX FIFO.
+- UART shifts out: start bit (0), data bits 1-0-0-0-0-1-0-0 (LSB first), stop bit (1).
+- Serial waveform: 0_41_1 over ~87 µs (1/115200 * 10 bits).
+- To receive: RX input is sampled; 10 bits detected and byte 0x41 placed in RX FIFO.
+- RX watermark interrupt fires if RX FIFO level > threshold; software reads 0x41 from RX FIFO.

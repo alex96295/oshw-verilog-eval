@@ -1,0 +1,96 @@
+Design a module called TopModule. This module serializes AXI4 transactions by reducing the number of concurrently-outstanding IDs, ensuring that only one transaction at a time is in flight for each ID that is actively used.
+
+Overview
+
+TopModule acts as an ID serializer, controlling the concurrency of transactions on an AXI4 bus. Rather than widening, narrowing, or remapping IDs, this module enforces a serialization policy: transactions with the same ID are serialized (one at a time), and the total number of distinct IDs in flight is limited. The module counts in-flight transactions per ID and blocks new requests on the slave side if their ID already has an outstanding request awaiting a response on the master side.
+
+Parameters
+
+  Parameter   Meaning   Constraint  
+ ----------- --------- ------------ 
+  AxiIdWidth   Width of the AXI4 ID field, in bits.   ≥ 1.  
+  aw_chan_t, w_chan_t, b_chan_t, ar_chan_t, r_chan_t   Struct types for the AXI4 channels.   User-supplied; define packed structs for AXI4 channel payloads.  
+
+Interface
+
+Clock and Reset
+- clk_i: input, clock.
+- rst_ni: input, active-low asynchronous reset.
+
+Slave Port (Upstream)
+- slv_aw_chan_i: input, aw_chan_t. Address write channel request.
+- slv_aw_valid_i: input, logic. Valid flag for address write.
+- slv_aw_ready_o: output, logic. Ready flag for address write.
+
+- slv_w_chan_i: input, w_chan_t. Write data channel.
+- slv_w_valid_i: input, logic. Valid flag for write data.
+- slv_w_ready_o: output, logic. Ready flag for write data.
+
+- slv_b_chan_o: output, b_chan_t. Write response channel.
+- slv_b_valid_o: output, logic. Valid flag for write response.
+- slv_b_ready_i: input, logic. Ready flag for write response.
+
+- slv_ar_chan_i: input, ar_chan_t. Address read channel request.
+- slv_ar_valid_i: input, logic. Valid flag for address read.
+- slv_ar_ready_o: output, logic. Ready flag for address read.
+
+- slv_r_chan_o: output, r_chan_t. Read data channel.
+- slv_r_valid_o: output, logic. Valid flag for read data.
+- slv_r_ready_i: input, logic. Ready flag for read data.
+
+Master Port (Downstream)
+- mst_aw_chan_o: output, aw_chan_t. Address write channel request.
+- mst_aw_valid_o: output, logic. Valid flag for address write.
+- mst_aw_ready_i: input, logic. Ready flag for address write.
+
+- mst_w_chan_o: output, w_chan_t. Write data channel.
+- mst_w_valid_o: output, logic. Valid flag for write data.
+- mst_w_ready_i: input, logic. Ready flag for write data.
+
+- mst_b_chan_i: input, b_chan_t. Write response channel.
+- mst_b_valid_i: input, logic. Valid flag for write response.
+- mst_b_ready_o: output, logic. Ready flag for write response.
+
+- mst_ar_chan_o: output, ar_chan_t. Address read channel request.
+- mst_ar_valid_o: output, logic. Valid flag for address read.
+- mst_ar_ready_i: input, logic. Ready flag for address read.
+
+- mst_r_chan_i: input, r_chan_t. Read data channel.
+- mst_r_valid_i: input, logic. Valid flag for read data.
+- mst_r_ready_o: output, logic. Ready flag for read data.
+
+Behavioral Requirements
+
+- Per-ID Serialization. The module maintains a counter for each possible AXI ID, tracking how many transactions with that ID are in flight (issued on the master side but not yet acknowledged with a response on the slave side). When a slave-side AW or AR request arrives with ID id, the request is blocked (ready = 0) if the counter for id is already non-zero. Only one transaction per ID may be in flight at any given time.
+
+- Counter Management. On a slave-to-master handshake on AW or AR channel (valid & ready), the corresponding counter is incremented. On a master-to-slave handshake on B or R channel (valid & ready), the corresponding counter is decremented.
+
+- W Channel Passthrough. The write data (W) channel passes through without ID-based serialization, as it carries no ID field. The module must ensure W-channel timing aligns with the AW-channel pipeline; typically W is passed through combinationally or with minimal buffering.
+
+- Response Pass-Through. B and R responses pass through with their original payloads unchanged.
+
+- Handshake Transparency. Valid and ready signals are propagated to maximize throughput subject to the per-ID serialization constraint.
+
+- Reset. On release from reset (rst_ni assertion), all per-ID counters are cleared to zero, and all state is reset.
+
+Throughput and Latency
+
+- Throughput: One transaction per ID per round-trip (request + response). Multiple IDs can be in flight concurrently if they are different, but overlapping transactions with the same ID are strictly serialized.
+- Latency: Combinational ID serialization check; buffering (if needed) depends on the implementation.
+
+Clock and Reset Domains
+
+- All ports operate in the same clk_i domain.
+- Reset is asynchronous (rst_ni, active low).
+
+Example Behavior
+
+Assume AxiIdWidth = 4 and all counters start at zero:
+
+1. Slave AW request with id = 0 arrives and is accepted (counter[0] becomes 1).
+2. Slave AW request with id = 1 arrives and is accepted (counter[1] becomes 1).
+3. Slave AW request with id = 0 arrives while counter[0] = 1; request is blocked (ready = 0).
+4. Master-side B response with id = 0 arrives and is accepted (counter[0] becomes 0).
+5. Slave AW request with id = 0 can now be accepted (counter[0] becomes 1 again).
+
+The module ensures that at most one outstanding request with id = 0 exists at any time on the master side.

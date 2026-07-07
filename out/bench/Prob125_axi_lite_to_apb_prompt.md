@@ -1,0 +1,109 @@
+Design a module called TopModule. This module is a bridge from AXI4-Lite to APB (Advanced Peripheral Bus), allowing AXI4-Lite masters to communicate with APB slaves by translating the two protocols and managing the timing differences.
+
+## Overview
+
+TopModule bridges AXI4-Lite and APB3 (or APB4) protocols. It accepts AXI4-Lite transactions on the slave side and translates them to APB bursts on the master side, handling the protocol differences: AXI4-Lite is request/response-oriented with decoupled address and data; APB is a simple synchronous multiplexed bus with setup and access phases. The bridge manages address decoding, data alignment, and response routing to enable AXI4-Lite-to-APB integration.
+
+## Parameters
+
+| Parameter | Meaning | Constraint |
+|-----------|---------|------------|
+| `AxiAddrWidth` | Width of the AXI4-Lite address field, in bits. | ≥ 1; typically 16-32. |
+| `AxiDataWidth` | Width of the AXI4-Lite data field, in bits. | Typically 32 or 64. |
+| `ApbAddrWidth` | Width of the APB address bus (paddr), in bits. | Typically 16-32; must match slave requirements. |
+| `ApbDataWidth` | Width of the APB data bus (pwdata/prdata), in bits. | Typically 32; must match slave requirements. |
+| `aw_chan_t`, `w_chan_t`, `b_chan_t`, `ar_chan_t`, `r_chan_t` | Struct types for AXI4-Lite channels. | User-supplied. |
+
+## Interface
+
+### Clock and Reset
+- `clk_i`: input, clock.
+- `rst_ni`: input, active-low asynchronous reset.
+
+### Slave Port (Upstream; AXI4-Lite)
+- `aw_chan_i`: input, `aw_chan_t`. Address write channel.
+- `aw_valid_i`: input, logic. Valid flag for address write.
+- `aw_ready_o`: output, logic. Ready flag for address write.
+
+- `w_chan_i`: input, `w_chan_t`. Write data channel.
+- `w_valid_i`: input, logic. Valid flag for write data.
+- `w_ready_o`: output, logic. Ready flag for write data.
+
+- `b_chan_o`: output, `b_chan_t`. Write response channel.
+- `b_valid_o`: output, logic. Valid flag for write response.
+- `b_ready_i`: input, logic. Ready flag for write response.
+
+- `ar_chan_i`: input, `ar_chan_t`. Address read channel.
+- `ar_valid_i`: input, logic. Valid flag for address read.
+- `ar_ready_o`: output, logic. Ready flag for address read.
+
+- `r_chan_o`: output, `r_chan_t`. Read data channel.
+- `r_valid_o`: output, logic. Valid flag for read data.
+- `r_ready_i`: input, logic. Ready flag for read data.
+
+### Master Port (Downstream; APB3/APB4)
+- `paddr_o`: output, logic `[ApbAddrWidth-1:0]`. APB address bus.
+- `pwdata_o`: output, logic `[ApbDataWidth-1:0]`. APB write data bus.
+- `pwrite_o`: output, logic. APB write enable (1=write, 0=read).
+- `psel_o`: output, logic. APB select line (slave select).
+- `penable_o`: output, logic. APB enable line (access phase indicator).
+- `pstrb_o`: output, logic `[ApbDataWidth/8-1:0]`. APB write strobes (if supported by APB version).
+- `prdata_i`: input, logic `[ApbDataWidth-1:0]`. APB read data bus.
+- `pready_i`: input, logic. APB ready line (slave ready).
+- `pslverr_i`: input, logic. APB slave error line (optional; APB4 feature).
+
+## Behavioral Requirements
+
+- **Protocol Translation (Write Path).**
+  - On AW/W handshake, the module captures the address and data.
+  - In the next clock (setup phase), the module drives paddr, pwdata, pwrite=1, psel=1, penable=0.
+  - On the following clock (access phase), penable is asserted (penable=1).
+  - When pready is asserted, the write is complete. The module waits for pready to return the B response to the AXI4-Lite master.
+  - If pslverr is asserted (on APB4), the response code is SLVERR; otherwise, OKAY.
+
+- **Protocol Translation (Read Path).**
+  - On AR handshake, the module captures the address.
+  - In the next clock (setup phase), paddr is driven, pwrite=0, psel=1, penable=0.
+  - On the following clock (access phase), penable is asserted.
+  - When pready is asserted, prdata is sampled. The module returns R data to the AXI4-Lite master with the sampled value.
+  - If pslverr is asserted, the response code is SLVERR; otherwise, OKAY.
+
+- **Address Decoding.** AXI4-Lite addresses are mapped to APB addresses. If AXI address width differs from APB, the bridge performs bit-width conversion (truncation or padding).
+
+- **Data Alignment.** If AXI4-Lite data width differs from APB data width, the bridge handles packing (AXI to APB) or unpacking (APB to AXI) by selecting appropriate byte lanes based on address offsets. Write strobes are adjusted accordingly.
+
+- **APB Timing.** The bridge manages the two-phase APB access:
+  1. Setup phase: address and control signals are driven; penable=0.
+  2. Access phase (next cycle): penable=1; pready determines when the transaction completes.
+
+- **Backpressure.** When APB is busy (pready=0), AXI4-Lite sides are stalled (ready=0). The bridge does not accept new requests until the current APB access completes.
+
+- **Reset.** On release from reset (`rst_ni` assertion), the APB lines are deasserted (psel=0, penable=0), and no transactions are pending.
+
+- **No Burst Support.** APB does not support bursts; each AXI4-Lite transaction (single beat) maps to a single APB transfer.
+
+## Throughput and Latency
+
+- **Throughput:** One AXI4-Lite transaction (AW/W or AR) per 2-3 APB cycles (setup + access + response), depending on pready timing.
+- **Latency:** 2-3 cycles per transaction due to APB's two-phase protocol.
+
+## Clock and Reset Domains
+
+- All ports operate in the same `clk_i` domain.
+- Reset is asynchronous (`rst_ni`, active low).
+
+## Example Behavior
+
+**Write Example (APB3):**
+1. AXI master: AW to 0x1000, W with data 32'h12345678.
+2. Cycle 0 (setup): Bridge drives paddr=0x1000, pwdata=0x12345678, pwrite=1, psel=1, penable=0.
+3. Cycle 1 (access): penable=1. If pready=1, write completes.
+4. Cycle 2: B response returned to AXI master with OKAY.
+
+**Read Example (APB3):**
+1. AXI master: AR to 0x2000.
+2. Cycle 0 (setup): Bridge drives paddr=0x2000, pwrite=0, psel=1, penable=0.
+3. Cycle 1 (access): penable=1. APB slave provides prdata. If pready=1, data is sampled.
+4. Cycle 2: R response returned with data and OKAY.
+
+The bridge enables transparent AXI4-Lite access to APB peripherals.

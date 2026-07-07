@@ -1,0 +1,100 @@
+Design a module called TopModule. This module implements an AXI4 error slave that responds to all
+transactions with a configurable error response. It is typically used for unmapped address ranges to
+prevent transactions from silently failing.
+
+## Overview
+
+TopModule is a passive AXI4 slave that accepts transactions from an upstream master, ignores all address
+and data information, and immediately responds with a fixed error status (typically DECERR for decode
+error or SLVERR for slave error). The module does not forward transactions to any downstream target;
+instead, it consumes them and synthesizes error responses. This is useful for address decoders that
+detect unmapped or invalid address ranges: rather than leaving the transaction hanging, the error slave
+provides a clean, protocol-compliant error response, allowing the master to proceed with error handling.
+
+## Parameters
+
+| Parameter | Meaning |
+|-----------|---------|
+| `AxiIdWidth` | Width of the AXI ID field. |
+| `AxiAddrWidth` | Width of the address bus, in bits. |
+| `AxiDataWidth` | Width of the data bus, in bits. |
+| `axi_req_t` | Struct type defining the complete AXI request. |
+| `axi_resp_t` | Struct type defining the complete AXI response. |
+| `AxiResp` | Default error response code: `axi_pkg::RESP_SLVERR` or `axi_pkg::RESP_DECERR` (typical). |
+
+## Interface
+
+| Port | Direction | Type | Description |
+|------|-----------|------|-------------|
+| `clk_i` | input | logic | Clock signal. |
+| `rst_ni` | input | logic | Asynchronous active-low reset. |
+| `slv_req_i` | input | `axi_req_t` | AXI4 request from the master. All fields (address, data, control) are accepted but not processed. |
+| `slv_resp_o` | output | `axi_resp_t` | AXI4 response to the master, always with error status set to `AxiResp`. |
+
+## Behavioral requirements
+
+- **Accepting all requests.** The module asserts ready signals on all request channels (AW_ready, W_ready,
+  AR_ready) whenever the master is sending (valid=1), and accepts the request. No buffering is necessary;
+  the module consumes the transaction on the same cycle it arrives.
+
+- **Error response generation.** For each accepted AW transaction, the module generates a B (write-response)
+  transaction with:
+  - `resp` field set to `AxiResp` (typically SLVERR or DECERR).
+  - `id` field set to the ID from the original AW transaction.
+  - Other fields (user, etc.) may be set to zero or preserved from request.
+  
+  The B response is asserted on the next clock cycle (or combinationally, depending on implementation).
+
+- **Read error responses.** For each accepted AR transaction, the module generates an R (read-response)
+  transaction with:
+  - `resp` field set to `AxiResp`.
+  - `id` field set to the ID from the original AR transaction.
+  - `data` field set to zero (or undefined, as the master should not use error data).
+  - `last` flag set to 1 (always a single beat).
+
+- **Write-data absorption.** All W (write-data) transactions are accepted via W_ready, and the data is
+  discarded. The module must track which W transactions belong to which AW, based on order (in a simple
+  implementation, W beats are matched to the most recent AW in FIFO order).
+
+- **Burst handling.** For multi-beat bursts, the module accepts all W beats (tracking the count via the
+  last flag) and issues a single B response when all beats of a burst have been received.
+
+- **Response timing.** B and R responses are issued with valid=1 as soon as the corresponding request has
+  been fully accepted:
+  - For writes: when the last W beat (W.last=1) has been accepted.
+  - For reads: when the AR has been accepted (R.last is implicitly 1 and is asserted immediately).
+
+- **Backpressure handling.** If the master is not ready to accept a response (resp_ready=0), the module
+  holds the response valid signal asserted until the master asserts ready.
+
+- **Reset behavior.** On `rst_ni` assertion, all internal state (pending write counts, response FIFOs if any)
+  resets. After reset, the module is ready to accept new transactions.
+
+- **Simple configuration.** The module is passive and does not require any external control signals or
+  address-based configuration. All transactions are treated identically.
+
+## Clock and reset domains
+
+- Single clock domain: `clk_i` and `rst_ni`.
+
+## Example behavior
+
+1. **Write request to unmapped address.** Master sends:
+   - AW: address=0xDEADBEEF, id=5, length=0.
+   - W: data=0x12345678, strb=8'hFF, last=1.
+   
+   Module accepts both and immediately responds:
+   - B: resp=SLVERR, id=5 (on the next cycle, or immediately, depending on design).
+
+2. **Read request to unmapped address.** Master sends:
+   - AR: address=0xDEADBEEF, id=7, length=0.
+   
+   Module accepts it and immediately responds:
+   - R: resp=SLVERR, id=7, data=0, last=1 (on the next cycle).
+
+3. **Multi-beat write.** Master sends:
+   - AW: address=0x1000, id=3, length=3 (4 beats).
+   - W beats 0–2: (data, strb, last=0 for beats 0–2, last=1 for beat 3).
+   
+   Module accepts all and responds:
+   - B: resp=SLVERR, id=3 (issued after beat 3 has been accepted).

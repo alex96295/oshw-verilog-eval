@@ -1,0 +1,41 @@
+Design a module called TopModule. This module is a combinational AES MixColumns operation that applies a GF(2^8) linear transformation to a 4x4 state matrix of bytes with direction control for encryption or decryption.
+
+## Overview
+
+TopModule implements the AES MixColumns step of the AES cipher. It treats the 128-bit state as a 4x4 array of bytes (indexed by column and row, in the same layout as ShiftRows). The module applies the MixColumns transformation independently to each column, composing a linear transform in GF(2^8) (the Galois Field). The transformation differs for forward (encryption) and inverse (decryption) operations. The module is purely combinational.
+
+## Parameters
+
+None.
+
+## Interface
+
+All ports are combinational; there is no clock or reset.
+
+| Port | Direction | Width | Description |
+|------|-----------|-------|-------------|
+| `op_i` | input | 2 | Cipher operation: `CIPH_FWD = 2'b01` (encryption/forward AES), `CIPH_INV = 2'b10` (decryption/inverse AES). Other values are undefined. |
+| `data_i` | input | 128 | Input 128-bit state, organized as 4 columns x 4 rows of bytes: `[3:0][3:0][7:0]` (column [major], row, byte). |
+| `data_o` | output | 128 | Output 128-bit state after MixColumns transformation, in the same format. |
+
+## Behavioral requirements
+
+- **State format.** The 128-bit input/output is hierarchically indexed: `data_i[col][row][bit]` where col ∈ {0,1,2,3}, row ∈ {0,1,2,3}, bit ∈ {0..7}. Columns are processed independently.
+- **MixColumns transformation per column.** Each column is a 4-byte vector `[a, b, c, d]`. The transformation applies a 4x4 circulant matrix multiplication in GF(2^8):
+  - **Forward (encryption):** The output column is `[2a⊕3b⊕c⊕d, a⊕2b⊕3c⊕d, a⊕b⊕2c⊕3d, 3a⊕b⊕c⊕2d]` where all operations (⊕, multiplication) are in GF(2^8), with the irreducible polynomial x^8 + x^4 + x^3 + x + 1.
+  - **Inverse (decryption):** Uses the inverse MixColumns matrix: output is `[0xE·a ⊕ 0xB·b ⊕ 0xD·c ⊕ 0x9·d, 0x9·a ⊕ 0xE·b ⊕ 0xB·c ⊕ 0xD·d, ...]` where coefficients are the inverse-matrix entries in GF(2^8).
+- **Purely combinational.** `data_o` is a combinational function of `op_i` and `data_i`; no latency beyond combinational propagation.
+- **Undefined behavior.** If `op_i` is neither `CIPH_FWD` nor `CIPH_INV`, the output is undefined.
+
+## Boundary conditions
+
+- **Forward MixColumns identity.** With a column input of `[x, 0, 0, 0]`, the forward output is `[2x, x, x, 3x]` (over GF(2^8)).
+- **Inverse cancellation.** Applying forward then inverse MixColumns to the same state recovers the original state (within GF(2^8) arithmetic).
+
+## Example
+
+Forward MixColumns on column `[0x53, 0xD6, 0xAB, 0xAC]`:
+- Output column ≈ `[0xF5, 0x2B, 0x6F, 0x2C]` (exact values depend on GF(2^8) multiplications).
+
+Inverse MixColumns on the same input:
+- Output column is different; combined forward+inverse recovers `[0x53, 0xD6, 0xAB, 0xAC]`.

@@ -1,0 +1,88 @@
+Design a module called TopModule. This module implements a simplified 1-to-N AXI4 demultiplexer.
+It routes a single upstream AXI4 slave port to one of N downstream AXI4 master ports based on a
+select signal. Unlike full demux implementations, this simplified version assumes that transactions
+are small (single-beat or a few beats) and does not require complex ID remapping or in-flight transaction
+tracking.
+
+## Overview
+
+TopModule accepts an AXI4 request from an upstream slave and a select input that indicates which of
+N downstream master ports should receive the transaction. For each channel (AW, W, B, AR, R), the module
+routes the data to the selected master port and its valid/ready signals. Write responses (B) and read
+responses (R) from the selected master are routed back to the slave. The module implements minimal
+buffering and assumes that the number of in-flight transactions is small enough that ID conflicts do
+not occur across the N masters.
+
+## Parameters
+
+| Parameter | Meaning |
+|-----------|---------|
+| `aw_chan_t` | Struct type for the AXI write-address channel. |
+| `w_chan_t` | Struct type for the AXI write-data channel. |
+| `b_chan_t` | Struct type for the AXI write-response channel. |
+| `ar_chan_t` | Struct type for the AXI read-address channel. |
+| `r_chan_t` | Struct type for the AXI read-data channel. |
+| `axi_req_t` | Struct type defining the complete AXI request. |
+| `axi_resp_t` | Struct type defining the complete AXI response. |
+| `NoMstPorts` | Number of downstream master ports (N). Typical values: 2–16. |
+| `MaxTxns` | Maximum number of in-flight transactions (used for internal tracking). |
+
+## Interface
+
+| Port | Direction | Type | Description |
+|------|-----------|------|-------------|
+| `clk_i` | input | logic | Clock signal. |
+| `rst_ni` | input | logic | Asynchronous active-low reset. |
+| `slv_req_i` | input | `axi_req_t` | AXI4 request from the upstream slave. |
+| `slv_resp_o` | output | `axi_resp_t` | AXI4 response to the upstream slave. |
+| `mst_select_i` | input | logic [log2(NoMstPorts)-1:0] | Index of the target master port (0 to NoMstPorts-1). |
+| `mst_req_o` | output | `axi_req_t [NoMstPorts-1:0]` | Array of AXI4 requests to downstream masters. Only the selected master receives valid requests; others are held low. |
+| `mst_resp_i` | input | `axi_resp_t [NoMstPorts-1:0]` | Array of AXI4 responses from downstream masters. |
+
+## Behavioral requirements
+
+- **Routing by select input.** When the slave sends a request (AW, W, or AR with valid=1), the module
+  routes it to the master port indicated by `mst_select_i`. Requests to non-selected masters have valid=0.
+
+- **One-to-one channel correspondence.** For a given transaction (identified by ID on AW/AR), all
+  associated channels (W for writes, B for write responses, R for read responses) are routed to the same
+  master port. The select signal must remain stable across the entire transaction for correctness.
+
+- **Response routing back.** Write responses (B) and read responses (R) from the selected master are
+  routed directly back to the slave. Responses from non-selected masters are ignored (their valid
+  signals are not propagated to the slave).
+
+- **Ready-signal arbitration.** The slave's ready signals (`slv_resp_o.*.ready`) are asserted only if
+  the corresponding selected master's ready signal is asserted. Non-selected masters' ready signals are
+  not visible to the slave.
+
+- **Simple tracking (no ID remapping).** The module does not remap transaction IDs. All AW and AR IDs
+  are passed through unchanged. The slave must ensure that IDs do not conflict across different transactions
+  sent to different masters. Alternatively, the select signal must change only between complete transactions.
+
+- **No internal queueing of responses.** B and R responses pass through directly from the selected master
+  to the slave. If the slave is not ready to accept a response while the master is trying to send it,
+  backpressure is applied at the response path.
+
+- **Reset behavior.** On `rst_ni` assertion, all output valid signals deassert. The module is ready to
+  accept new transactions after reset.
+
+## Clock and reset domains
+
+- Single clock domain: `clk_i` and `rst_ni`.
+
+## Example behavior
+
+1. **Route to master 0.** Slave sends AW to master 0 by setting `mst_select_i=0`.
+   - `mst_req_o[0].aw_valid` is asserted with the address.
+   - `mst_req_o[1..N-1].aw_valid` remain low.
+   - Master 0 responds with B; `slv_resp_o.b_valid` carries the response.
+
+2. **Switch to master 1.** Slave later sends AR to master 1 by setting `mst_select_i=1`.
+   - `mst_req_o[1].ar_valid` is asserted with the address.
+   - `mst_req_o[0,2..N-1].ar_valid` remain low.
+   - Master 1 responds with R; `slv_resp_o.r_valid` carries the response.
+
+3. **Backpressure.** Master 0 is busy (not ready). Slave is waiting to send AW to master 0.
+   - `slv_resp_o.aw_ready` is low (held by master 0's readiness).
+   - Slave holds its AW_valid until master 0 asserts ready.

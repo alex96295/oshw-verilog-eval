@@ -1,0 +1,85 @@
+Design a module called TopModule. This module implements an AXI4 atomic operation (ATOP) filter: it
+permits normal read and write transactions to pass through transparently, but intercepts atomic operations
+that cannot be supported and absorbs them by returning a SLVERR error response.
+
+Overview
+
+TopModule sits on an AXI4 bus as a protocol converter that selectively blocks certain write transactions.
+It operates on the AXI4 protocol (5 channels: AW/W/B/AR/R with valid/ready handshakes). When a normal
+(non-atomic) transaction arrives on the slave port, it is forwarded directly to the master port with
+full request and response paths maintained. When an atomic write transaction (indicated by a non-zero
+ATOP field in the AW channel) is detected and marked as unsupported, TopModule absorbs the AW and
+W portions locally, suppresses the downstream master request, and injects a synthesized B response
+with SLVERR back to the slave. Read transactions always pass through unchanged. The module tracks
+in-flight write transactions to ensure that the slave sees write responses in the correct order and
+that the master is never presented with unmatched write data.
+
+Parameters
+
+  Parameter   Meaning  
+ ----------- --------- 
+  AxiIdWidth   Width of the AXI ID field.  
+  AxiMaxWriteTxns   Maximum number of concurrent write transactions the module will permit. Constrains the internal counter that tracks pending writes.  
+  axi_req_t   Struct type defining the slave request (contains aw, w, ar channels and valid/ready logic).  
+  axi_resp_t   Struct type defining the slave response (contains b, r channels and valid/ready logic).  
+
+Interface
+
+  Port   Direction   Type   Description  
+ ------ ----------- ------ ------------- 
+  clk_i   input   logic   Clock signal. All synchronous logic operates on the rising edge.  
+  rst_ni   input   logic   Asynchronous active-low reset.  
+  slv_req_i   input   axi_req_t   AXI4 request from the upstream slave. Carries write-address (aw), write-data (w), and read-address (ar) channel payloads.  
+  slv_resp_o   output   axi_resp_t   AXI4 response to the upstream slave. Carries write-response (b) and read-data (r) channel payloads.  
+  mst_req_o   output   axi_req_t   AXI4 request forwarded to the downstream master.  
+  mst_resp_i   input   axi_resp_t   AXI4 response from the downstream master.  
+
+Behavioral requirements
+
+- Atomic operation (ATOP) detection. The module examines the ATOP field of incoming write-address
+  transactions. Non-zero ATOP values indicate an atomic operation. Atomic operations are considered
+  unsupported and must be blocked.
+- Normal transaction pass-through. Transactions on all channels that do not involve an unsupported
+  atomic write (i.e., non-ATOP writes, all reads, all write-data for passes-through writes) are
+  forwarded directly from slave to master with handshake signals (valid/ready) preserved. Responses
+  from the master are routed directly back to the slave.
+- Blocked atomic suppression. When a write-address transaction arrives with a non-zero ATOP field,
+  the module must:
+  - Accept (assert aw_ready) the AW channel on the slave side.
+  - Block the master-side aw_valid signal (hold it low).
+  - Suppress the corresponding W channel (hold w_valid to the master low).
+  - Accept any W data that the slave attempts to send on the W channel.
+- Blocked atomic response injection. For each absorbed atomic write transaction, the module must
+  inject a write-response (B) transaction with the SLVERR error status back to the slave, using the
+  same ID as the original AW transaction. If the atomic operation carries a read response (indicated
+  by the ATOP field), the module also injects a synthesized R response with SLVERR and appropriate
+  ID/data routing.
+- Write transaction ordering. The module maintains a counter of pending write transactions (write-address
+  transactions accepted but not yet responded to). This counter gates new AW transactions to prevent
+  exceeding AxiMaxWriteTxns in-flight writes. W and B channels are ordered such that:
+  - Write-data always corresponds to a prior write-address.
+  - Write responses are delivered in some order, but a correct implementation must ensure the slave
+    sees all in-flight write transactions accounted for.
+- Reset behavior. On assertion of rst_ni, all state machines and counters reset. After reset,
+  the module is ready to accept transactions.
+- Full pipeline transparency when Atop-free. If the slave never sends atomic transactions, the
+  module operates with minimal latency and logic, forwarding all channels combinationally where possible.
+
+Clock and reset domains
+
+- Single clock domain: clk_i and rst_ni apply to all synchronous state.
+
+Example behavior
+
+Assume AxiMaxWriteTxns = 4.
+
+1. Normal write. Slave sends (aw_valid, aw.atop=ATOP_NONE). Module forwards to master immediately.
+   Master returns b_valid; module routes it back to slave.
+
+2. Atomic write (unsupported). Slave sends (aw_valid, aw.atop != ATOP_NONE).
+   - Module accepts it on slave (aw_ready=1).
+   - Module blocks master (mst_req_o.aw_valid=0).
+   - Module expects W data on slave (and accepts it, w_ready=1) but does not forward to master (mst_req_o.w_valid=0).
+   - Module injects a B response on slv_resp_o.b_valid with b.resp=SLVERR and b.id matching the original request.
+
+3. Read pass-through. All AR and R channel activity passes through unchanged.

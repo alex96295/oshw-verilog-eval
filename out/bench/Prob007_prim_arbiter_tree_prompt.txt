@@ -1,0 +1,87 @@
+Design a module called TopModule. This module is a tree-based round-robin arbiter that grants exclusive access to one of N requesters using a hierarchical tournament tree with rotating priority.
+
+Overview
+
+TopModule arbitrates between N independent requesters using a tree-based round-robin priority scheme. The arbiter constructs a binary tournament tree where each node selects a winner from its children. The tree includes a programmable priority mask that rotates after each grant, ensuring round-robin fairness. By combining tree-based arbitration with rotating priority, this design provides O(log N) latency with fair distribution.
+
+Parameters
+
+  Parameter   Meaning   Default  
+ ----------- --------- --------- 
+  N   Number of requesters.   8  
+  DW   Width of the data payload per requester, in bits.   32  
+  EnDataPort   When 1, enable data payload passthrough; when 0, data_o is undriven.   1  
+  req_chk_i   Unused input signal (for compatibility).   —  
+  IdxW   Width of the index output (computed as ceil(log2(N))).   —  
+
+Interface
+
+  Port   Direction   Width   Description  
+ ------ ----------- ------- ------------- 
+  clk_i   input   1   System clock.  
+  rst_ni   input   1   Asynchronous active-low reset.  
+  req_chk_i   input   1   Unused input (reserved for future use).  
+  req_i   input   N   Request vector: bit i is high when requester i is requesting access.  
+  data_i   input   DW×N   Data payload array: data_i[i] is the data from requester i.  
+  gnt_o   output   N   Grant vector: bit i is high when requester i is granted. Only one bit may be high per cycle.  
+  idx_o   output   IdxW   Index of the granted requester (0 to N-1); only valid when valid_o is high.  
+  valid_o   output   1   High when at least one requester has been granted (when req_i != 0).  
+  data_o   output   DW   Data from the granted requester; valid when valid_o is high.  
+  ready_i   input   1   Ready signal: when high, the arbiter may grant and transfer the current request.  
+
+Behavioral requirements
+
+Tree-Based Arbitration
+- The module implements a binary tournament tree with log₂(N) levels.
+- At each level, nodes pair up and select a winner based on relative priorities, propagating the selection upward to the root.
+- The root node produces the final grant index and data payload.
+- Tree-based selection is inherently fast and hierarchical.
+
+Rotating Priority Mask
+- The arbiter maintains an internal priority mask that rotates after each successful grant (when ready_i && valid_o).
+- The mask defines the base priority: requesters above the mask boundary are checked first.
+- After a grant, the mask advances by one position, giving the next requester higher priority.
+
+Mask Application
+- At each tree node, the mask controls which child (left or right) has priority.
+- If the left subtree's highest-priority request is blocked by the mask, the right subtree's request is selected instead.
+- This rotating mask ensures round-robin behavior across the tree structure.
+
+Data Passthrough
+- When EnDataPort = 1, the data from the granted requester is driven onto data_o.
+- When EnDataPort = 0, data_o is not used.
+
+Combinational Grant
+- Grant selection is combinational: gnt_o, idx_o, and data_o respond immediately to changes in req_i and the internal mask.
+- valid_o is high whenever req_i != 0.
+- gnt_o bits are driven high only when ready_i is also high.
+
+Ready Handshake
+- When ready_i is low, no grant is issued, and the internal mask is not advanced.
+- When ready_i is high and a request is pending, a grant is issued and the mask advances on the next clock edge.
+
+Priority Rotation
+- The internal mask is updated on the clock edge following a successful grant.
+- The mask rotates by one position: mask <= {mask[N-2:0], mask[N-1]} (or equivalent rotation).
+- This ensures that the next cycle's arbitration starts at the next priority level.
+
+Reset
+- On rst_ni assertion (active low), the internal priority mask is reset to an initial state, typically all zeros.
+
+Example
+
+With N = 8, tree depth = 3:
+
+  Cycle   req_i   ready_i   gnt_o (winner index)   Internal Mask Update   Notes  
+ ------- --------- --- --- --- --- 
+  0   8'b11111111   1   Index 0   Mask rotates from 0 to 1   All active; tree grants lowest index [0]  
+  1   8'b11111111   1   Index 1   Mask rotates from 1 to 2   Mask now favors [1]; tree grants [1]  
+  2   8'b11111111   1   Index 2   Mask rotates from 2 to 3   Mask now favors [2]; tree grants [2]  
+  ...   ...   ...   ...   ...   ...  
+  7   8'b11111111   1   Index 7   Mask wraps to 0   Mask wraps; tree grants [7]  
+  8   8'b11111111   1   Index 0   Mask rotates from 0 to 1   Cycle repeats; round-robin ensures fairness  
+  9   8'b00001111   1   Index 3   Mask rotates from 1 to 2   Only [3:0] active; tree grants [3] (next in rotation)  
+  10   8'b00001111   0   0   Mask doesn't update   No grant; ready=0, mask stalls  
+  11   8'b00001111   1   Index 0   Mask rotates from 2 to 3   Grant resumes; tree grants next priority [0]  
+
+The tree structure ensures logarithmic arbitration latency while the rotating mask provides round-robin fairness comparable to linear arbiters.

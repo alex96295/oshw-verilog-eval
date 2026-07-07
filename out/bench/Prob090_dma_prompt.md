@@ -1,0 +1,184 @@
+Design a module called TopModule. This module is a Direct Memory Access (DMA) Controller that orchestrates data movement between address spaces (e.g., memory to peripheral, peripheral to memory) via TileLink bus master and slave ports, handles address generation, supports configurable transfer sizes and handshaking with peripherals, and signals completion and error interrupts.
+
+## Overview
+
+TopModule acts as a flexible DMA engine, exposing a TL-UL control register interface for software-driven transfer configuration, and a pair of TL-UL bus manager ports (upstream as slave for source reads, downstream as manager for dest writes). The module manages source/destination address generation, transfer byte counting, optional integrity checking, and handshaking with peripherals via trigger signals. It supports multiple concurrent transfer types and can perform chained operations.
+
+## Parameters
+
+| Parameter | Meaning |
+|-----------|---------|
+| `AlertAsyncOn` | Per-alert async/sync mode. |
+| `AlertSkewCycles` | Alert propagation delay. |
+| `EnableDataIntgGen` | Enable data integrity generation (HMAC/digest) for writes. |
+| `EnableRspDataIntgCheck` | Enable data integrity checking for read responses. |
+| `TlUserRsvd` | Reserved TL-UL user bits. |
+| `SysRaclRole` | RACL role for system agent (access control). |
+| `OtAgentId` | Agent ID for tracing/accounting. |
+| `EnableRacl` | Enable RACL (Resource Access Control List) checks. |
+| `RaclErrorRsp` | Enable RACL error responses. |
+
+## Interface
+
+### Clocks & Resets
+- `clk_i`, `rst_ni`: Main clock and active-low reset.
+- `scanmode_i` (input): Scan mode enable (Mubi4 encoded); inhibits transfers during scan.
+
+### TL-UL Register Bus (Control)
+- `tl_d_i` (input): TL-UL host-to-device request (device-side register interface).
+- `tl_d_o` (output): TL-UL device-to-host response (register readback).
+
+Provides software access to control registers (source address, destination address, transfer size, command flags).
+
+### TL-UL Manager Port (Data Transfer - Upstream/Destination Read)
+- `ctn_tl_h2d_o` (output): TL-UL host-to-device; DMA acts as agent reading from an upstream source (e.g., memory or peripheral).
+- `ctn_tl_d2h_i` (input): TL-UL device-to-host response; upstream device (e.g., memory) responds with data.
+
+This port is used when DMA reads source data (e.g., from memory to fill a FIFO).
+
+### TL-UL Manager Port (Data Transfer - Downstream/Source Write)
+- `host_tl_h_o` (output): TL-UL host-to-device; DMA acts as agent writing to a downstream device (e.g., memory or peripheral).
+- `host_tl_d2h_i` (input): TL-UL device-to-host response; downstream device (e.g., memory) acknowledges the write.
+
+This port is used when DMA writes data (e.g., from a peripheral to memory).
+
+### System Data Interface
+- `sys_o` (output): System-level request (address, data, write/read flags, size, metadata).
+- `sys_i` (input): System-level response (ack, error, read data, integrity bits).
+
+Alternative interface for direct system memory access; used by some implementations instead of (or in addition to) the TL-UL ports above.
+
+### Interrupt Signals
+- `intr_dma_done_o` (output): Asserted when a configured DMA transfer completes (all bytes transferred).
+- `intr_dma_chunk_done_o` (output): Asserted when a chunked transfer segment completes (useful for pipelined operations).
+- `intr_dma_error_o` (output): Asserted on transfer error (e.g., write deny, misalignment, timeout).
+
+### Peripheral Triggers
+- `lsio_trigger_i` (input): Trigger signal from peripheral (e.g., UART has data, ADC conversion done). Used to conditionally start DMA transfers or indicate data availability.
+
+### Alerts & Access Control
+- `alert_tx_o[NumAlerts-1:0]` (output): Alert transmit (differential).
+- `alert_rx_i[NumAlerts-1:0]` (input): Alert acknowledge.
+- `racl_policies_i` (input): RACL policy configuration (if RACL enabled).
+- `racl_error_o` (output): RACL access violation log.
+
+## Control Registers (via TL-UL Register Bus)
+
+- **CONTROL**: Start/stop transfer, enable interrupts, select transfer type (read, write, copy).
+- **SRC_ADDR**: Source address for read operations.
+- **DST_ADDR**: Destination address for write operations.
+- **TOTAL_DATA_SIZE**: Total bytes to transfer in this operation.
+- **CHUNK_SIZE**: (Optional) Size of each chunk in a chunked transfer.
+- **SRC_ATTR** / **DST_ATTR**: Attributes for source/destination (e.g., endianness, alignment).
+- **STATUS**: Current state (IDLE, BUSY, DONE, ERROR), bytes transferred, error code.
+- **INT_STATUS / INT_EN / INT_TEST**: Interrupt control.
+- **ALERT_TEST**: Alert test injection.
+
+## Behavioral Requirements
+
+### Transfer Types
+
+1. **Simple Read**: DMA reads TOTAL_DATA_SIZE bytes from SRC_ADDR via the upstream TL-UL port, discards or stores data.
+2. **Simple Write**: DMA writes TOTAL_DATA_SIZE bytes to DST_ADDR via the downstream TL-UL port.
+3. **Memory Copy**: DMA reads from SRC_ADDR and writes to DST_ADDR (copy operation).
+4. **Peripheral-to-Memory**: DMA reads from a peripheral (via TL-UL or sys interface) and writes to memory.
+5. **Memory-to-Peripheral**: DMA reads from memory and writes to a peripheral.
+
+### Address Generation
+- **Source Address**: Incremented by burst size (typically 4 or 8 bytes) after each transaction.
+- **Destination Address**: Similarly incremented.
+- **Address Wrap**: If configured, address may wrap at a boundary (e.g., FIFO address) rather than increment linearly.
+
+### Transfer Size & Burst Mode
+- **Burst Size**: Configurable (1, 2, 4, 8, 16 bytes per burst).
+- **Total Size**: Software specifies total bytes to transfer; DMA iterates until reaching the limit.
+- **Chunking**: Optional; breaks a large transfer into smaller chunks, allowing interrupts between chunks (useful for interactive / responsive operation).
+
+### Handshaking Protocol (TL-UL)
+- **Request Phase**: DMA asserts `tl_h2d.a_valid` with address, data, write enable, and size.
+- **Grant Phase**: Target responds with `tl_d2h.a_ready` when it can accept the request.
+- **Response Phase**: For reads, target asserts `tl_d2h.d_valid` with read data; DMA asserts `tl_h2d.d_ready` to accept.
+- **Pipelining**: A-channel and D-channel can operate in parallel; multiple requests can be in-flight.
+
+### Integrity Checking (Optional)
+- If `EnableDataIntgGen` is set:
+  - DMA computes a hash/HMAC of written data and includes it in the TL-UL beat.
+  - Downstream device verifies integrity on its side.
+- If `EnableRspDataIntgCheck` is set:
+  - DMA verifies the integrity field in read responses from the upstream device.
+  - Mismatch triggers an integrity error alert.
+
+### Error Handling
+- **Address Misalignment**: If configured burst size is larger than source/destination alignment, error is asserted.
+- **Bus Error**: If a TL-UL response indicates an error (e.g., device denial, address fault), DMA aborts and asserts error interrupt.
+- **Timeout**: If a request or response does not complete within a configurable timeout, DMA aborts with timeout error.
+- **Data Integrity Error**: If integrity check fails (EnableRspDataIntgCheck), fatal alert is asserted.
+
+### Interrupt Signaling
+- **Transfer Done**: When all configured bytes are transferred, `intr_dma_done_o` is asserted (if enabled via INT_EN).
+- **Chunk Done**: If chunked mode is enabled, `intr_dma_chunk_done_o` asserts at the end of each chunk.
+- **Error**: On any error condition, `intr_dma_error_o` is asserted; error code is logged in STATUS register.
+
+### Trigger-Driven Operation
+- If peripheral trigger `lsio_trigger_i` is asserted, TopModule can conditionally start or pause DMA transfers.
+- Typical use: UART has data ready -> assert trigger -> DMA reads from UART FIFO.
+- Trigger can be configured to gate transfer initiation or to pace the transfer (e.g., read one beat per trigger).
+
+### RACL (Resource Access Control List)
+- If RACL is enabled, TopModule checks whether the requesting master (identified by SysRaclRole and OtAgentId) has permission to read/write the addresses being transferred.
+- RACL policy defines allowed ranges and per-role permissions.
+- RACL violation causes a transfer abort and optional error response (if RaclErrorRsp is enabled).
+
+### Reset Behavior
+- On reset, all registers are cleared.
+- Any in-flight transfers are aborted.
+- Interrupts and alerts are cleared.
+- DMA returns to IDLE state.
+
+### Synchronization & Clock Domain
+- All logic is synchronous to `clk_i`.
+- TL-UL interface is synchronous to `clk_i`.
+- System interface (`sys_o/i`) may be in a different clock domain (CDC required); typically synchronized via CDC muxes.
+
+## Example Scenario
+
+1. Software writes:
+   - SRC_ADDR = 0x8000_0000 (memory address).
+   - DST_ADDR = 0x4000_1000 (peripheral address).
+   - TOTAL_DATA_SIZE = 1024 (1 KB).
+   - CONTROL = {start=1, type=MEM_TO_PERIPH, burst_size=8}.
+
+2. TopModule begins a memory-to-peripheral copy:
+   - Requests 8 bytes from address 0x8000_0000 via the upstream TL-UL port.
+   - Receives data, writes 8 bytes to address 0x4000_1000 via downstream TL-UL port.
+   - Increments source and destination addresses by 8.
+   - Repeats until 1024 bytes transferred (128 bursts).
+
+3. After all transfers complete, TopModule:
+   - Asserts `intr_dma_done_o` (if INT_EN.done is set).
+   - Sets STATUS.state = DONE, STATUS.bytes_transferred = 1024.
+
+4. Software reads STATUS to confirm, then clears the interrupt by writing to INT_STATUS register.
+
+5. On the next DMA operation, CONTROL.start is asserted again; DMA returns to IDLE and awaits new configuration.
+
+## Boundary Parameters & Constraints
+- **Maximum Transfer Size**: Typically 32-64 MB per operation (limited by counter width).
+- **Burst Widths**: 1, 2, 4, 8, 16 bytes (typical).
+- **Address Alignment**: Source and destination must be aligned to burst width.
+- **TL-UL Beat Size**: 32 bits (word) or 64 bits (double-word), depending on downstream device.
+- **Timeout Threshold**: Typically 1000-10000 cycles without response before timeout declared.
+
+## Pipelining & Throughput
+- DMA can pipeline A-channel requests and D-channel responses, allowing multiple requests in-flight.
+- Typical throughput: 1 burst per cycle (if burst size matches TL-UL beat width and no backpressure).
+- With optimized pipelining, throughput can approach bus bandwidth limits.
+
+## Example with Chunking
+
+1. Software configures TOTAL_DATA_SIZE = 100 KB, CHUNK_SIZE = 4 KB.
+2. DMA performs 25 chunks of 4 KB each.
+3. After each 4 KB chunk, TopModule asserts `intr_dma_chunk_done_o`.
+4. Software can handle each chunk interrupt, perform housekeeping, then re-enable DMA for the next chunk.
+5. After all 25 chunks, `intr_dma_done_o` asserts.
+

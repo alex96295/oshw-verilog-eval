@@ -1,0 +1,64 @@
+Design a module called TopModule. This module is a registered AES S-box (Substitution Box) that applies the byte-wise AES forward or inverse substitution with optional masking and PRD support for a single byte.
+
+## Overview
+
+TopModule implements a single-byte AES S-box with full support for masked computation and pseudo-random data (PRD) for side-channel resistance. It applies either the forward S-box (used in SubBytes encryption) or the inverse S-box (used in SubBytes decryption) to an 8-bit input, with masked outputs and internal randomness for fault tolerance. The module is *registered* internally (pipelined) and includes handshaking and error signals.
+
+## Parameters
+
+| Parameter | Type | Default | Meaning |
+|-----------|------|---------|---------|
+| `SecSBoxImpl` | sbox_impl_e | SBoxImplLut | S-box implementation variant: `SBoxImplLut` (lookup table, unmasked), `SBoxImplCanright` (polynomial-based, unmasked), `SBoxImplCanrightMasked`, `SBoxImplCanrightMaskedNoreuse`, `SBoxImplDom` (DOM-masked). Masked variants accept and use `mask_i` and `prd_i`; unmasked versions ignore them. |
+
+## Interface
+
+| Port | Direction | Width | Description |
+|------|-----------|-------|-------------|
+| `clk_i` | input | 1 | Clock. |
+| `rst_ni` | input | 1 | Active-low reset. |
+| `en_i` | input | 1 | Enable signal: when 1, input is latched and computation begins. |
+| `out_req_o` | output | 1 | Output request / valid flag. Asserted when output is ready (after pipeline delay). |
+| `out_ack_i` | input | 1 | Output acknowledge. Downstream asserts to consume output. |
+| `op_i` | input | 2 | Cipher operation: `CIPH_FWD = 2'b01` (forward S-box, encryption), `CIPH_INV = 2'b10` (inverse S-box, decryption). |
+| `data_i` | input | 8 | Input byte to substitute. |
+| `mask_i` | input | 8 | Mask value (for masked implementations). For unmasked S-boxes, ignored. |
+| `prd_i` | input | 28 | Pseudo-random data: 8 bits for the S-box output + 20 bits for masking refresh/randomness. For unmasked implementations, unused. |
+| `data_o` | output | 8 | Output byte (substituted result for unmasked implementations; masked share for masked implementations). |
+| `mask_o` | output | 8 | Output mask share. For unmasked implementations, set to `0`. True result = `data_o ⊕ mask_o`. |
+| `prd_o` | output | 20 | Output pseudo-random data (unused portions or refresh data passed through for higher-level coordination). |
+
+## Behavioral requirements
+
+- **S-box substitution.**
+  - **Forward** (`CIPH_FWD`): `data_o` (or `data_o ⊕ mask_o` if masked) equals `S[data_i]`, where `S` is the AES forward S-box.
+  - **Inverse** (`CIPH_INV`): `data_o` (or `data_o ⊕ mask_o` if masked) equals `S_inv[data_i]`, the AES inverse S-box.
+- **Masked computation.** For masked S-box implementations:
+  - `mask_i` provides input masking; the computation internally preserves the masking property.
+  - `prd_i` provides randomness for secure masking implementations (e.g., DOM masking uses all 28 bits).
+  - Output: `data_o` and `mask_o` such that `data_o ⊕ mask_o` equals the true S-box result (unmasked).
+  - `prd_o` may be unused zeros or pass-through data for higher-level PRD management.
+- **Unmasked implementations.** If the S-box implementation is unmasked:
+  - `mask_i` and `prd_i` are ignored (internal `unused_` signals).
+  - `mask_o` is `0` (no masking).
+  - `data_o` directly contains the S-box result.
+  - `prd_o` is `0` (no PRD output).
+- **Handshaking.**
+  - `en_i`: Single-cycle enable pulse. On rising edge of `clk_i` with `en_i == 1`, the input (`data_i`, `mask_i`, `op_i`, `prd_i`) is latched.
+  - `out_req_o`: Asserted (latched) when output is available (after internal pipeline delay, typically 1–2 cycles). Remains asserted until `out_ack_i` is sampled high.
+  - `out_ack_i`: Downstream drives high to acknowledge output consumption. On the clock edge, internal state may advance and `out_req_o` may deassert.
+- **Reset behavior.** On `rst_ni == 0`, all registers are cleared; `out_req_o` is deasserted.
+
+## Timing / latency
+
+Pipeline delay is 1–2 cycles depending on the S-box implementation:
+- `SBoxImplLut` (single-cycle, unmasked): output appears 1–2 cycles after enable.
+- Masked variants (DOM): may take additional cycles for secure computation.
+
+## Example
+
+Forward S-box with input `data_i = 0x53`:
+- Unmasked: `data_o = 0xED`, `mask_o = 0x00`.
+- Masked (example): `data_o = 0xAB`, `mask_o = 0x46` such that `0xAB ⊕ 0x46 = 0xED`.
+
+Inverse S-box with input `data_i = 0xED`:
+- Unmasked: `data_o = 0x53`, `mask_o = 0x00`.

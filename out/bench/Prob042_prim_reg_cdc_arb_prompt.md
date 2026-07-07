@@ -1,0 +1,90 @@
+Design a module called TopModule. This module implements a register clock-domain-crossing (CDC) bridge with built-in arbitration between software and hardware sources, allowing updates from either domain while ensuring coherency.
+
+## Overview
+
+TopModule is an enhanced CDC register bridge that combines dual-domain access with request arbitration. It manages write transactions between a source clock domain and a destination clock domain, supporting both software-initiated writes and hardware-initiated writes. The module arbitrates between conflicting write requests and uses CDC synchronizers to safely transfer data and control signals across the clock boundary.
+
+## Parameters
+
+| Parameter | Meaning | Constraint |
+|-----------|---------|------------|
+| `DataWidth` | Width of the data being transferred, in bits. | ≥ 1; typically 8, 16, 32. |
+| `ResetVal` | Reset value for the register. | `DataWidth` bits. |
+| `DstWrReq` | Enable destination-initiated write requests. | Bit; if 1, destination domain can request register updates; if 0, source domain drives all updates. |
+
+## Interface
+
+TopModule bridges two independent clock domains (`clk_src_i` and `clk_dst_i`) with independent resets.
+
+### Source Domain
+
+| Port | Direction | Width | Description |
+|------|-----------|-------|-------------|
+| `clk_src_i` | input | 1 | Source clock. |
+| `rst_src_ni` | input | 1 | Active-low asynchronous reset for source domain. |
+| `src_ack_o` | output | 1 | Acknowledge from source: pulsed high when a software write is accepted and synchronized to destination. |
+| `src_update_o` | output | 1 | Software update indicator: strobes high when software writes and the destination domain observes the update. |
+
+### Destination Domain
+
+| Port | Direction | Width | Description |
+|------|-----------|-------|-------------|
+| `clk_dst_i` | input | 1 | Destination clock. |
+| `rst_dst_ni` | input | 1 | Active-low asynchronous reset for destination domain. |
+| `dst_req_i` | input | 1 | Destination write request: when asserted, destination domain requests to update the register with `dst_ds_i`. |
+| `dst_req_o` | output | 1 | Destination request output: strobed when a synchronized request from source arrives at destination. |
+| `dst_update_i` | input | 1 | Destination update notification: asserted when new hardware data `dst_ds_i` is available in the destination domain. |
+| `dst_ds_i` | input | `DataWidth` | Hardware data input in destination domain (e.g., from a peripheral or monitor). |
+| `dst_qs_i` | input | `DataWidth` | Current register value in destination domain. |
+| `dst_qs_o` | output | `DataWidth` | Output register value; updated by writes from either source or destination domain. |
+
+## Behavioral requirements
+
+- **Two write sources.** The destination register can be updated from either the source domain (software via protocol request) or the destination domain (hardware via `dst_req_i` and `dst_update_i`).
+
+- **Source domain write request (if `DstWrReq = 0`):**
+  - The source domain initiates write requests via handshake protocol (implementation-specific; may use request/acknowledge).
+  - Write data is synchronized to the destination domain using CDC synchronizers (dual-flops minimum).
+  - Upon successful synchronization and update, `src_ack_o` pulses high to acknowledge the source.
+  - `src_update_o` strobes to indicate the destination domain has accepted and recorded the update.
+
+- **Destination domain write request (if `DstWrReq = 1`):**
+  - When `dst_req_i` is asserted, the destination domain requests permission to update the register with `dst_ds_i`.
+  - If `dst_update_i` is also asserted in the same or adjacent cycle, the update is acknowledged.
+  - The destination register `dst_qs_o` is updated with `dst_ds_i` (or a synchronized version if the data crosses clock domains).
+  - `dst_req_o` strobes high to confirm the request was processed.
+
+- **Arbitration.**
+  - If simultaneous write requests arrive from both source and destination domains, the module applies a fixed priority:
+    - **Priority:** destination domain (`dst_req_i`) typically has higher priority, or requests are serialized.
+    - The lower-priority requestor is delayed until the higher-priority transaction completes.
+  - The module ensures mutual exclusion: only one write occurs per cycle.
+
+- **Register coherency.**
+  - `dst_qs_o` always reflects the current register value in the destination domain after any update.
+  - Reads of `dst_qs_o` return the latest value written (either from source or destination).
+
+- **Reset behavior.**
+  - On reset in either domain, `dst_qs_o` initializes to `ResetVal`.
+  - CDC synchronizers handle metastability during reset transitions.
+  - All acknowledgment and strobes (`src_ack_o`, `src_update_o`, `dst_req_o`) are deasserted on reset.
+
+- **CDC safety.**
+  - All cross-domain signals use metastability-hardened synchronizers.
+  - Handshake protocols enforce gray-coded or multi-stage synchronization to eliminate metastability-induced glitches.
+
+## Clock and Reset Domains
+
+- Two independent synchronous clock domains: source (`clk_src_i`) and destination (`clk_dst_i`).
+- Two independent asynchronous resets: `rst_src_ni` and `rst_dst_ni`.
+
+## Example: Destination write (DstWrReq = 1)
+
+| Dst Cycle | `clk_dst_i` | `dst_req_i` | `dst_update_i` | `dst_ds_i` | `dst_qs_o` | `dst_req_o` |
+|-----------|-----------|-----------|--------------|----------|----------|----------|
+| 0 | ↑ | 0 | 0 | — | (old) | 0 |
+| 1 | ↑ | 1 | 1 | `32'h1234` | (updating) | 0 |
+| 2 | ↑ | 0 | 0 | × | `32'h1234` | 1 |
+| 3 | ↑ | 0 | 0 | × | `32'h1234` | 0 |
+
+In cycle 1, both `dst_req_i` and `dst_update_i` are high. In cycle 2, the register updates to the new value and `dst_req_o` strobes high to acknowledge.

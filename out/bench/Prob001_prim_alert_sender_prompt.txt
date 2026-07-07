@@ -1,0 +1,74 @@
+Design a module called TopModule. This module is an alert sender that transmits alert requests over a differential handshake channel and handles incoming acknowledgment and ping responses.
+
+Overview
+
+TopModule is the transmit side of a dual-rail differential alert signaling link. It takes internal alert requests and test signals, encodes them into differential outputs (alert_p/alert_n), and decodes incoming differential feedback (ping and acknowledgment) from the receiver. The module provides hardened alert transmission with optional asynchronous mode support.
+
+Parameters
+
+  Parameter   Meaning   Default  
+ ----------- --------- --------- 
+  AsyncOn   When 1, use asynchronous (fast) differential decoding; when 0, use synchronous decoding.   1  
+  SkewCycles   Number of cycles allowed for skew tolerance in differential decoding.   1  
+  IsFatal   When 1, indicates this alert is fatal-level; affects handshake behavior.   0  
+
+Interface
+
+  Port   Direction   Width   Description  
+ ------ ----------- ------- ------------- 
+  clk_i   input   1   System clock.  
+  rst_ni   input   1   Asynchronous active-low reset.  
+  alert_test_i   input   1   Test mode: when high, forces an alert event for testing.  
+  alert_req_i   input   1   Alert request from the logic block: high indicates an alert condition.  
+  alert_ack_o   output   1   Alert acknowledged: high when the receiver has accepted the alert.  
+  alert_state_o   output   1   Current alert state: reflects the internal alert status.  
+  alert_rx_i   input   alert_rx_t   Differential feedback from receiver: contains ping_p, ping_n, ack_p, ack_n.  
+  alert_tx_o   output   alert_tx_t   Differential alert transmission: contains alert_p and alert_n.  
+
+Where alert_rx_t and alert_tx_t are record types containing differential signal pairs:
+- alert_tx_t.alert_p / alert_tx_t.alert_n — differential alert outputs (high/low pair).
+- alert_rx_t.ping_p / alert_rx_t.ping_n — differential ping feedback from receiver.
+- alert_rx_t.ack_p / alert_rx_t.ack_n — differential acknowledgment feedback from receiver.
+
+Behavioral requirements
+
+Alert Transmission
+- When alert_req_i or alert_test_i is high, the module asserts an alert condition by driving the differential outputs (alert_p high, alert_n low).
+- The alert state is latched internally and persists until the receiver acknowledges it (via the differential ack feedback).
+- Once acknowledged, the alert may be re-issued if a new alert request arrives.
+
+Ping Handshake
+- The receiver periodically sends differential ping requests (ping_p/ping_n transitions).
+- The module decodes the incoming ping and responds appropriately, allowing the receiver to verify the link is alive.
+- Ping events are detected when a transition is seen on the differential pair.
+
+Acknowledgment Decoding
+- The receiver sends differential acknowledgment signals (ack_p/ack_n) in response to an alert.
+- The module decodes the ack feedback and asserts alert_ack_o when acknowledgment is received.
+- The ack decoding uses either asynchronous or synchronous decoding, depending on AsyncOn.
+
+Differential Encoding
+- Alert transmission uses dual-rail differential encoding (alert_p high + alert_n low for a '1' state; both symmetric for quiet state).
+- Provides hardening against single-event upsets and side-channel attacks.
+
+Skew and Timing
+- The SkewCycles parameter allows tolerance for skew between differential pair arrivals in synchronous mode.
+- In asynchronous mode, skew tolerance is built into the capture logic.
+
+Reset
+- On rst_ni assertion (active low), the module resets all internal state and stops transmitting alerts.
+- alert_ack_o and alert_state_o are cleared.
+
+Example
+
+With AsyncOn = 1, SkewCycles = 1:
+
+  Cycle   alert_test_i   alert_req_i   alert_state_o   alert_ack_o   alert_tx_o   Notes  
+ ------- --- --- --- --- --- --- 
+  0   0   0   0   0   (quiet)   Idle, no alert  
+  1   0   1   1   0   alert_p high   Alert request asserted  
+  2   0   1   1   0   alert_p high   Alert persists until ack  
+  3   0   0   1   1   (quiet)   Receiver sends ack, alert acknowledged  
+  4   0   0   0   1   (quiet)   Ack absorbed, alert clears next cycle  
+
+The exact timing of transitions depends on the differential decoding pipeline (AsyncOn and SkewCycles).

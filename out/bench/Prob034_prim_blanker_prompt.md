@@ -1,0 +1,47 @@
+Design a module called TopModule. This module is a data blanker that conditionally forces its output to zero based on an enable signal.
+
+## Overview
+
+TopModule is a purely combinational gate that zeros out its input when disabled and passes the input unchanged when enabled. The blanking is performed using an AND gate where one input is the data word and the other input is the enable signal replicated across all bits. This simple module is useful for preventing sensitive data leakage when a circuit section is disabled or when data validity is conditioned on an external signal.
+
+## Parameters
+
+| Parameter | Meaning | Constraint |
+|-----------|---------|------------|
+| `Width`   | Width of the data bus, in bits. | >= 1 (int unsigned). Default: 1. |
+
+## Interface
+
+All ports are combinational; there is no clock, no reset, and no state.
+
+| Port    | Direction | Width   | Description |
+|---------|-----------|---------|-------------|
+| `in_i`  | input     | `Width` | Input data. |
+| `en_i`  | input     | 1       | Enable signal (active high). |
+| `out_o` | output    | `Width` | Output data (blanked if en_i = 0). |
+
+## Behavioral requirements
+
+- **Enabled.** When `en_i = 1`, the output equals the input: `out_o = in_i`.
+- **Disabled.** When `en_i = 0`, the output is forced to all zeros: `out_o = 0`.
+- **Implementation.** The blanking is achieved using a bitwise AND operation: `out_o[i] = in_i[i] & en_i` for each bit i.
+- **Combinational.** The output responds combinationally to changes in both `in_i` and `en_i`; there is no registered behavior.
+
+## Timing
+
+- Combinational path from inputs to output: standard AND gate propagation delay.
+- No clocked or asynchronous behavior.
+
+## Example
+
+With `Width = 8`:
+
+| `in_i`    | `en_i` | `out_o`   |
+|-----------|--------|-----------|
+| 8'hAA     | 1      | 8'hAA     |
+| 8'hBB     | 1      | 8'hBB     |
+| 8'hCC     | 0      | 8'h00     |
+| 8'hDD     | 0      | 8'h00     |
+| 8'hFF     | 1      | 8'hFF     |
+
+When enabled, data passes through. When disabled, output is zeroed.

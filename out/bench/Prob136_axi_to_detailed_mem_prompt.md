@@ -1,0 +1,54 @@
+Design a module called TopModule. This module converts an AXI4 slave interface into a simple memory access interface with request/grant handshaking, exposing all transaction metadata including ID, burst information, and atomic operations.
+
+## Overview
+
+TopModule is an AXI4-to-detailed-memory converter. It accepts AXI4 transactions on a slave port and converts them into simple memory-style requests with individual request/grant signals. Unlike simpler memory converters, this module exposes fine-grained request metadata (transaction ID, write strobe, burst type, size, length, atomic operation details) allowing a memory subsystem to react differently to different transaction types. Data flows through the converter: write data is buffered and presented on the request side, read data is accepted and routed back to AXI4.
+
+## Parameters
+
+| Parameter | Meaning |
+|-----------|---------|
+| `axi_req_t`, `axi_resp_t` | AXI4 struct types. |
+| `AddrWidth`, `DataWidth`, `IdWidth`, `UserWidth` | Bit widths. |
+| `NumBanks` | Number of parallel memory banks (typically 1 for a unified memory). |
+| `BufDepth` | Internal buffer depth for requests. |
+| `HideStrb` | If true, write strobes are not exposed separately. |
+| `OutFifoDepth` | Output FIFO depth for read responses. |
+
+## Interface
+
+| Port | Direction | Type | Description |
+|------|-----------|------|-------------|
+| `clk_i` | input | - | Clock. |
+| `rst_ni` | input | - | Active-low reset. |
+| `slv_req_i` | input | `axi_req_t` | AXI4 request from master. |
+| `slv_resp_o` | output | `axi_resp_t` | AXI4 response to master. |
+| `mem_req_o` | output | struct | Memory request: contains address, ID, burst info, atomic op, write data, write enable, and other metadata. |
+| `mem_req_valid_o` | output | logic | Request valid signal. |
+| `mem_req_ready_i` | input | logic | Request ready signal. |
+| `mem_rsp_i` | input | struct | Memory response: contains read data and optional user/ID info. |
+| `mem_rsp_valid_i` | input | logic | Response valid signal. |
+| `mem_rsp_ready_o` | output | logic | Response ready signal. |
+
+## Behavioral requirements
+
+- **Request decomposition.** Each AXI4 beat (AW+W or AR) is converted into a memory request with the full burst metadata (length, size, burst type, ID, atomics). If the burst has length > 0, each subsequent beat is presented as a separate request (address incremented per beat).
+- **Write handling.** Write data (W) is buffered and presented alongside the write address request. The converter computes beat addresses and write strobes.
+- **Read handling.** Read requests (AR) are converted and forwarded. When read responses arrive, they are collected, buffered, and formatted as AXI4 R beats.
+- **Metadata exposure.** Transaction ID, write strobes, atomics (ATOP), burst type, size, length, user signals, and address are all exposed in the memory request.
+- **Buffering.** Internal FIFOs decouple the AXI4 side from the memory side, allowing pipelining.
+- **Response ordering.** Responses are ordered by transaction ID (or FIFO order if IDs are not enforced).
+- **Reset behavior.** On reset, buffers are cleared and all pending requests/responses are abandoned.
+
+## Throughput and latency
+
+- **Latency.** Depends on buffer depth and memory response latency.
+- **Throughput.** Up to one request per cycle (when both sides are ready), limited by the smaller of AXI4 input and memory request bandwidth.
+
+## Clock and reset domains
+
+Single clock domain.
+
+## Example behavior
+
+A master sends an AXI4 write burst: AW with ID=3, address=0x1000, length=1 (2 beats), size=2 (4 bytes), burst=INCR, followed by W with data=[0xDEADBEEF, 0xCAFEBABE]. The converter generates two memory requests: request 0 at address 0x1000 with data 0xDEADBEEF and request 1 at address 0x1004 with data 0xCAFEBABE, both carrying ID=3. Once both are acknowledged and processed, a B response with ID=3 is sent back to the master.

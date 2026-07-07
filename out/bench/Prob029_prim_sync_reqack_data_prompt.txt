@@ -1,0 +1,68 @@
+Design a module called TopModule. This module is a clock-domain-crossing synchronizer that safely transfers both a request-acknowledge handshake and a wide data word between two clock domains.
+
+Overview
+
+TopModule combines a request-acknowledge (req/ack) CDC synchronizer with optional data capture and transfer logic. The module implements a 4-phase handshake protocol (either NRZ or RZ mode) to coordinate a transaction between source and destination clock domains, and optionally captures the data at the destination or passes it through. The handshake ensures both sides remain synchronized, and data validity is tied to the handshake completion.
+
+Parameters
+
+  Parameter     Meaning   Constraint  
+ ------------- --------- ------------ 
+  Width       Width of the data bus, in bits.   >= 1 (int unsigned). Default: 1.  
+  EnRstChks   Enable reset-related assertions.   0 or 1 (bit). Default: 0.  
+  DataSrc2Dst   Data direction: 1 = source-to-destination, 0 = destination-to-source.   0 or 1 (bit). Default: 1.  
+  DataReg     If 1 and DataSrc2Dst = 0, register data at destination.   0 or 1 (bit). Default: 0.  
+  EnRzHs      Select Return-to-Zero (RZ) vs. Non-Return-to-Zero (NRZ) mode.   0 or 1 (bit). Default: 0 (NRZ).  
+
+Interface
+
+  Port            Direction   Width          Description  
+ --------------- ----------- -------------- ------------- 
+  clk_src_i     input       1              Source clock domain.  
+  rst_src_ni    input       1              Active-low synchronous reset for source domain.  
+  clk_dst_i     input       1              Destination clock domain.  
+  rst_dst_ni    input       1              Active-low synchronous reset for destination domain.  
+  req_chk_i     input       1              Request check flag (used for assertions).  
+  src_req_i     input       1              Request input from source domain.  
+  src_ack_o     output      1              Acknowledgment feedback to source domain.  
+  dst_req_o     output      1              Request output to destination domain.  
+  dst_ack_i     input       1              Acknowledgment input from destination domain.  
+  data_i        input       Width        Data input (source domain when DataSrc2Dst = 1, dest when 0).  
+  data_o        output      Width        Data output (destination domain when DataSrc2Dst = 1, source when 0).  
+
+Behavioral requirements
+
+Handshake
+
+The underlying handshake operates identically to prim_sync_reqack: NRZ mode (EnRzHs = 0) toggles signals; RZ mode (EnRzHs = 1) uses pulsed handshakes. Both use 2-stage synchronizers for CDC safety. See the req/ack specification for full handshake protocol details.
+
+Data transfer when DataSrc2Dst = 1 (source-to-destination)
+
+- Pass-through mode (default). The data bus data_i is directly connected to data_o. Data is combinationally available on the destination side without registration or latching.
+- Registered capture (not used with DataSrc2Dst = 1). When DataSrc2Dst = 0 and DataReg = 1, the destination captures data on handshake completion (when dst_req_o & dst_ack_i).
+
+Data transfer when DataSrc2Dst = 0 (destination-to-source)
+
+- Pass-through. If DataReg = 0, data_i passes directly to data_o (source domain sees it combinationally).
+- Registered capture. If DataReg = 1, data is captured at the destination when the handshake completes (dst_req_o & dst_ack_i). The captured value is then visible on data_o in the source domain.
+
+Timing and data stability
+
+- Data must be stable during the handshake phase in the originating clock domain. Changes to data_i after a request is initiated but before acknowledgment is received may result in undefined output.
+- Output data_o reflects data_i combinationally (pass-through) or captures the handshake point value (if registered). Timing follows the handshake protocol completion.
+
+Reset and clock domains
+
+- On assertion of rst_src_ni or rst_dst_ni, internal handshake FSMs return to initial states. Data registers (if used) are reset to 0.
+- All clocked registers operate in their respective clock domains.
+
+Example (DataSrc2Dst = 1, pass-through mode)
+
+  Src Cycle   src_req_i   data_i   Dst Cycle   Dst Req (synced)   dst_req_o   dst_ack_i   data_o  
+ ----------- ------------- ---------- ----------- ------------------ ------------- ------------- ---------- 
+  0           0             0xAA       —           0                  0             0             0xAA      
+  1           1             0xBB       1           0 (meta)           0             0             0xBB      
+  2           1             0xBB       2           1                  1             0             0xBB      
+  3           1             0xBB       3           1                  1             1 (acked)     0xBB      
+
+Data flows through combinationally; handshake ensures both sides know when valid data is present.

@@ -1,0 +1,74 @@
+Design a module called TopModule. This module is the message FIFO front-end for KMAC: it
+accepts message byte streams with byte strobes and a last flag, packs/buffers them, and streams
+them to the KMAC engine with optional masking support for cryptographic operations.
+
+Overview
+
+TopModule is a parameterizable message FIFO that bridges unaligned input message data into a
+fixed-width output stream suitable for the KMAC (Keccak Message Authentication Code) accelerator.
+It supports both single-share and dual-share (masked) operation. The module accepts message input
+with per-byte strobes to handle variable-length messages and buffers them in an internal FIFO.
+It can operate in bypass mode (direct path-through) or FIFO-buffered mode, and signals message
+completion via a process handshake. Clock and reset are required; the module is synchronous.
+
+Parameters
+
+  Parameter   Meaning   Constraint  
+ ----------- --------- ------------ 
+  OutWidth   Output data width in bits.   Typically 64, must be a multiple of 8.  
+  EnMasking   Enable dual-share (masked) operation.   1 = dual-share (Share=2), 0 = single-share (Share=1).  
+  MsgDepth   FIFO depth (number of message entries).   Typically 9; depth counter width is $clog2(MsgDepth+1).  
+
+Interface
+
+  Port   Direction   Width   Description  
+ ------ ----------- ------- ------------- 
+  clk_i   input   1   Clock signal; all synchronous logic is clocked by this signal.  
+  rst_ni   input   1   Active-low asynchronous reset.  
+  fifo_valid_i   input   1   Valid signal for input FIFO; indicates fifo_data_i is valid and ready to be accepted.  
+  fifo_data_i   input   OutWidth  Share   Input message data; array of Share words (1 or 2 shares depending on EnMasking).  
+  fifo_strb_i   input   OutWidth   Byte strobe for input data; each bit indicates validity of an 8-bit chunk.  
+  fifo_ready_o   output   1   Handshake ready signal; when high, TopModule is ready to accept input. In bypass mode, directly connects to msg_ready_i.  
+  fifo_bypass_i   input   1   Bypass mode control; when high, input is passed directly through without FIFO buffering.  
+  msg_valid_o   output   1   Output message valid; indicates msg_data_o and msg_strb_o are valid. In bypass mode, directly connects to fifo_valid_i.  
+  msg_data_o   output   OutWidth  Share   Output message data; array of Share words presented to the KMAC engine.  
+  msg_strb_o   output   OutWidth/8   Output byte strobe; indicates which bytes of msg_data_o are valid. Converted from bit-level strobe to byte-level.  
+  msg_ready_i   input   1   Downstream ready signal; handshake ready from the KMAC engine or next stage.  
+  fifo_empty_o   output   1   FIFO empty flag; asserted when the internal FIFO contains no entries.  
+  fifo_full_o   output   1   FIFO full flag; asserted when the internal FIFO is at capacity.  
+  fifo_depth_o   output   $clog2(MsgDepth+1)   FIFO occupancy; number of entries currently stored in the FIFO.  
+  clear_i   input   1   Clear/reset signal (MUBI4 encoded); clears the FIFO and resets internal state.  
+  process_i   input   1   Process signal; indicates the current message transfer is complete and ready for processing.  
+  process_o   output   1   Process signal output; propagates process handshake from input to output, delayed by FIFO if buffering.  
+  err_o   output   variable   Error output signal; reports any errors detected in the FIFO operation.  
+
+Behavioral requirements
+
+- Dual-mode operation. The module supports two modes selected by fifo_bypass_i:
+  - Bypass mode (fifo_bypass_i = 1): Input is passed directly through to output without FIFO buffering; msg_valid_o driven by fifo_valid_i, fifo_ready_o driven by msg_ready_i.
+  - FIFO mode (fifo_bypass_i = 0): Input is buffered in the internal FIFO; valid handshaking occurs independently on input and output sides.
+
+- Byte strobe handling. The input strobe fifo_strb_i is bit-level (one bit per 8 bits of data). The output strobe msg_strb_o is byte-level (one bit per 8-bit word, i.e., OutWidth/8 bits). TopModule converts between these representations.
+
+- Shared and masked operation. When EnMasking = 1, data is dual-share (2 independent shares); when 0, single-share (1 word). All strobes and valid signals apply uniformly to all shares.
+
+- FIFO occupancy. fifo_depth_o indicates the number of entries in the FIFO. fifo_empty_o is high when depth is zero; fifo_full_o is high when depth equals MsgDepth.
+
+- Clear and reset. The clear_i signal (MUBI4 encoded) asynchronously clears the FIFO and resets internal pointers. The synchronous rst_ni is the primary reset.
+
+- Process signal propagation. The process_i input is a handshake signal indicating message completion. In bypass mode, process_o is directly driven by process_i; in FIFO mode, it is delayed and synchronized with FIFO output.
+
+- Handshake compliance. All valid/ready pairs follow standard ready-valid handshaking: a transfer occurs when both valid and ready are high, and data must remain stable during the transfer cycle.
+
+Example
+
+Assume OutWidth = 64, EnMasking = 0 (single-share), MsgDepth = 9:
+
+Bypass mode (fifo_bypass_i = 1):
+- Input: fifo_valid_i = 1, fifo_data_i[0] = 64'hDEADBEEFCAFEBABE, fifo_strb_i = 64'hFFFFFFFFFFFFFFFF.
+- Output: msg_valid_o = 1, msg_data_o[0] = 64'hDEADBEEFCAFEBABE, msg_strb_o = 8'hFF (all bytes valid).
+
+FIFO mode (fifo_bypass_i = 0):
+- Write cycle 1: fifo_valid_i = 1, fifo_data_i[0] = 64'h0123456789ABCDEF, fifo_strb_i = 64'h00000000FFFFFFFF (low 4 bytes valid).
+- FIFO stores the entry; fifo_depth_o increments.
+- Read cycle: msg_valid_o = 1, msg_data_o[0] = 64'h0123456789ABCDEF, msg_strb_o = 8'h0F (low 4 bytes valid).

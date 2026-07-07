@@ -1,0 +1,105 @@
+Design a module called TopModule. This module is a SHA-2 compression core supporting 64-bit datapath and multiple hash modes (SHA-256, SHA-384, SHA-512), with message FIFO input and digest state management.
+
+## Overview
+
+TopModule implements the SHA-2 cryptographic hash compression function in 64-bit (full-word) datapath variant. It supports three hash modes: SHA-256 (32-bit internal words, 256-bit output), SHA-384 (64-bit internal words, 384-bit output), and SHA-512 (64-bit internal words, 512-bit output). The module consumes 64-bit message blocks from a FIFO, manages digest state registers, and outputs the final hash upon completion. It includes controls for starting, stopping, and continuing hash operations, and supports clearing/wiping of secret data.
+
+## Parameters
+
+| Parameter | Meaning | Constraint |
+|-----------|---------|------------|
+| `MultimodeEn` | Enable support for SHA-384 and SHA-512. If 0, only SHA-256 available. | bit, default 0. |
+| `RndWidth256` | log2(NumRound256) where NumRound256 = 64 for SHA-256. | int, derived. |
+| `RndWidth512` | log2(NumRound512) where NumRound512 = 80 for SHA-384/512. | int, derived. |
+
+## Interface
+
+| Port | Direction | Width / Type | Description |
+|------|-----------|--------------|-------------|
+| `clk_i` | input | 1 | Clock. Round computation, state updates, FIFO control driven by rising edge. |
+| `rst_ni` | input | 1 | Async active-low reset. Digest state and counters cleared. |
+| `wipe_secret_i` | input | 1 | Secure wipe request. If asserted, sensitive state is overwritten with wipe_v_i. |
+| `wipe_v_i` | input | 32 (sha_word32_t) | Wipe value (32-bit word, replicated for masking). Replaces secret state on wipe. |
+| `fifo_rvalid_i` | input | 1 | FIFO read valid. Asserted when fifo_rdata_i contains a valid 64-bit message word. |
+| `fifo_rdata_i` | input | sha_fifo64_t (64-bit data + 8-bit mask) | FIFO read data: a 64-bit word and a per-byte valid mask. Mask[i] indicates byte i is valid. |
+| `fifo_rready_o` | output | 1 | FIFO read ready. Asserted when the module is ready to consume a message word. |
+| `sha_en_i` | input | 1 | SHA enable. Must be high for compression to proceed. |
+| `hash_start_i` | input | 1 | Hash start signal. Asserts to begin a new hash computation; triggers initialization of digest. |
+| `hash_stop_i` | input | 1 | Hash stop signal. Asserts to stop mid-computation (e.g., on error). |
+| `hash_continue_i` | input | 1 | Hash continue signal. Asserts to resume a paused hash. |
+| `digest_mode_i` | input | 3 (digest_mode_e) | Hash mode: SHA2_256, SHA2_384, SHA2_512, or SHA2_None. Selects algorithm. |
+| `hash_process_i` | input | 1 | Process signal. Triggers round computation on current message schedule. |
+| `hash_done_o` | output | 1 | Hash done signal. Asserted when final round completes and digest is ready. |
+| `message_length_i` | input | [63:0] | Message length in bits (for padding). Used by external padding logic. |
+| `digest_i` | input | [7:0][63:0] (sha_word64_t[8]) | Digest input: 8 words of 64 bits. Loaded before hash_start, updated after each block. |
+| `digest_we_i` | input | [7:0] (8 bits) | Digest write-enable: per-word strobes. If digest_we[i] is high, digest_i[i] is loaded into internal digest[i]. |
+| `digest_o` | output | [7:0][63:0] | Digest output: 8 words of 64 bits. Updated after final round. For SHA-256, only digest_o[0..3] are used (and are 32-bit values in the upper bits if MultimodeEn=1). |
+| `digest_on_blk_o` | output | 1 | Digest on block boundary signal. Asserted when the module is ready to accept a new message block (all prior blocks processed). |
+| `fifo_st_o` | output | fifoctl_state_e (3 bits) | FIFO control state: FifoLoadFromFifo, FifoShifting, FifoWaitForPush, etc. Indicates current message FIFO handling phase. |
+| `hash_running_o` | output | 1 | Hash running signal. High when a hash computation is in progress. |
+| `idle_o` | output | 1 | Idle signal. High when the module is not computing, allowing new hash operations. |
+
+## Behavioral requirements
+
+- **SHA-2 modes.**
+  - SHA-256: 64 rounds per 512-bit message block. Internal words are 32 bits (stored in 64-bit registers, upper 32 bits zero). Output is 256 bits (8 × 32-bit words, stored as 4 × 64-bit words).
+  - SHA-384: 80 rounds per 1024-bit message block. Internal words are 64 bits. Output is 384 bits (6 × 64-bit words).
+  - SHA-512: 80 rounds per 1024-bit message block. Internal words are 64 bits. Output is 512 bits (8 × 64-bit words).
+  - SHA-384 and SHA-512 are available only if MultimodeEn=1; otherwise undefined if selected.
+
+- **Message schedule.** The message schedule W[t] is computed from the input message block (first 16 values are the block itself; W[16..63] or W[16..79] are derived via the expansion function). The W array is loaded from FIFO and expanded on demand. For SHA-256, W values are 32 bits; for SHA-384/512, they are 64 bits.
+
+- **Compression rounds.** For each round t (0 to Rounds-1), the following transformation is applied:
+  ```
+  T1 = H + Σ1(E) + Ch(E, F, G) + K[t] + W[t]
+  T2 = Σ0(A) + Maj(A, B, C)
+  H := G; G := F; F := E; E := D + T1; D := C; C := B; B := A; A := T1 + T2
+  ```
+  where A, B, C, D, E, F, G, H are the eight working variables, and Σ (sigma), Ch, Maj are SHA-2-defined functions. Round constants K[t] are SHA-2 standard values.
+
+- **Digest state.** The module maintains an 8-word digest state (initialized from SHA-2 IV on hash_start, modified by loading via digest_we_i). After each message block is processed, the digest state is accumulated (added, modulo 2^32 or 2^64): digest := digest + (A, B, C, D, E, F, G, H). The accumulated digest is output on digest_o.
+
+- **Message FIFO input.** The module reads 64-bit words from fifo_rdata_i (with per-byte valid mask fifo_rdata_i.mask). It assembles these into the 512-bit or 1024-bit message blocks required by the hash mode. The FIFO control state (fifo_st_o) reflects current FIFO handling:
+  - FifoLoadFromFifo: Actively reading words from FIFO.
+  - FifoShifting: Reassembling words internally (no FIFO read).
+  - FifoWaitForPush: Waiting for external push (e.g., HMAC feeding message).
+
+- **Start/continue/stop semantics.**
+  - hash_start_i: Begin a fresh hash. Initialize digest from SHA-2 IV. Set hash_running high. Initialize message schedule.
+  - hash_continue_i: Resume a paused hash (e.g., after processing prior message block). Digest state is preserved; continue compression.
+  - hash_stop_i: Pause hash computation. Hash remains "running" internally but external protocol halts.
+  - hash_done_o: Asserted when the final round of the final block is complete. Digest is finalized and available on digest_o.
+
+- **Padding.** This module does not perform padding. External logic (or software) must:
+  1. Feed the message blocks (each 512 or 1024 bits) in 64-bit chunks.
+  2. Detect end-of-message and insert the final padding block (message || 1 || 0...0 || length).
+  3. Signal hash_done_i to indicate final block is about to be processed.
+
+- **Wiping (wipe_secret_i).** When asserted, sensitive state (digest, W schedule, working variables) is replaced with wipe_v_i (replicated to fill registers). This is a security feature to avoid leaking state if the module is interrupted or de-allocated.
+
+- **Message length input.** message_length_i (64 bits) is made available to external padding logic, allowing it to encode the total message length in the final padding block.
+
+## Clock domain
+
+Single clock domain driven by `clk_i`; asynchronous reset via `rst_ni`.
+
+## Latency
+
+- Per-round latency: typically 1 cycle per SHA-2 round (64 or 80 cycles per message block).
+- Block latency: ~64–80 cycles, plus overhead for FIFO assembly and digest accumulation.
+
+## Example
+
+Scenario: Compute SHA-256 of a simple message.
+
+| Input | Cycle | State | Output | Notes |
+|-------|-------|-------|--------|-------|
+| hash_start=HIGH, digest_mode=SHA2_256 | 0 | IDLE | - | Start fresh SHA-256. Digest initialized to SHA-256 IV. |
+| fifo_rvalid=HIGH, fifo_rdata=(first 64 bits of padded block) | 1-8 | Loading | - | Consume first 8 × 64-bit words (512 bits) of message block. |
+| hash_process=HIGH | 9 | Round 0-63 | - | Compute 64 compression rounds. |
+| (none) | 73 | Final digest accum | digest_o = H | After round 63, digest state is accumulated and output. |
+| hash_done_o | 74 | IDLE | digest_o valid | Hash complete. hash_done_o asserted. |
+
+Constraints:
+- digest_mode_i must be held constant during a hash computation.
+- fifo_rdata_i.mask must accurately reflect which bytes are valid (typically all 8 for message blocks, partial mask for final padding).

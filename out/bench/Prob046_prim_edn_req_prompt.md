@@ -1,0 +1,88 @@
+Design a module called TopModule. This module implements an entropy distribution network (EDN) request adapter that bridges a local entropy request interface to a remote EDN entropy source, managing request handshakes and response synchronization across clock domains.
+
+## Overview
+
+TopModule adapts a local synchronous request/acknowledge interface to the entropy distribution network (EDN) protocol. It manages request initiation, data retrieval from the remote EDN source, and CDC synchronization between a local clock domain and the EDN clock domain. The module handles FIPS-flagging (indicating FIPS-approved entropy) and error reporting.
+
+## Parameters
+
+| Parameter | Meaning | Constraint |
+|-----------|---------|------------|
+| `OutWidth` | Width of the local entropy output, in bits. | ≥ 1; typically 32–256. |
+| `RepCheck` | Enable repetition-count checking. | Bit; if 1, detect repeated values as potential entropy degradation. |
+| `EnRstChks` | Enable reset-domain checks. | Bit; if 1, validate CDC behavior during reset transitions. |
+| `MaxLatency` | Maximum allowed response latency, in cycles. | ≥ 0; used for timing assertions; 0 = no limit. |
+
+## Interface
+
+TopModule bridges two independent clock domains: local request domain (`clk_i`) and EDN response domain (`clk_edn_i`).
+
+### Local Request Interface
+
+| Port | Direction | Width | Description |
+|------|-----------|-------|-------------|
+| `clk_i` | input | 1 | Local clock (request initiator). |
+| `rst_ni` | input | 1 | Active-low asynchronous reset for local domain. |
+| `req_chk_i` | input | 1 | Request check enable: when asserted, enables error checking during request handshake. |
+| `req_i` | input | 1 | Request signal: when asserted (and `ack_o` is low), initiate an entropy request. |
+| `ack_o` | output | 1 | Acknowledge: held high while a request is pending; drops when data is available. |
+| `data_o` | output | `OutWidth` | Requested entropy data. |
+| `fips_o` | output | 1 | FIPS flag: asserted if the returned entropy is FIPS-approved. |
+| `err_o` | output | 1 | Local error flag: asserted on protocol violations or EDN errors (latched). |
+
+### EDN Interface
+
+| Port | Direction | Width | Description |
+|------|-----------|-------|-------------|
+| `clk_edn_i` | input | 1 | EDN clock (entropy source). |
+| `rst_edn_ni` | input | 1 | Active-low asynchronous reset for EDN domain. |
+| `edn_o` | output | `edn_pkg::edn_req_t` | EDN request bus: encodes request type and parameters; width and format defined by `edn_pkg`. |
+| `edn_i` | input | `edn_pkg::edn_rsp_t` | EDN response bus: carries entropy data, FIPS flag, and error bits; width and format defined by `edn_pkg`. |
+
+## Behavioral requirements
+
+- **Request initiation.** When `req_i` is asserted, the module forms a request packet on `edn_o` and sends it to the EDN source. The `ack_o` signal is raised to indicate a request is in flight.
+
+- **Response handling.** The EDN source responds asynchronously (on its own clock) with entropy data and status bits on `edn_i`. The response includes:
+  - Entropy word(s) of width `edn_pkg::ENDPOINT_BUS_WIDTH` (typically 32–64 bits).
+  - FIPS flag indicating whether the entropy meets FIPS standards.
+  - Error bits from the EDN indicating entropy source problems.
+
+- **CDC synchronization.** Since `req_i` and `edn_i` are in different clock domains, the module uses CDC synchronizers (dual-flop minimum, or full handshake protocol) to safely transfer request and response signals. Metastability hardening prevents glitches.
+
+- **Data aggregation.** If `OutWidth` exceeds `edn_pkg::ENDPOINT_BUS_WIDTH`, multiple EDN responses are buffered and concatenated until `OutWidth` bits are available. If `OutWidth` is less, extra bits are discarded.
+
+- **Request completion.** When all requested entropy is ready, `ack_o` drops, and `data_o` and `fips_o` present the full response. A new request can be issued by asserting `req_i` again.
+
+- **Error handling.**
+  - If `RepCheck = 1`, the module detects repeated entropy values (identical consecutive words) and asserts `err_o`, flagging degraded entropy.
+  - If the EDN reports errors (via response bits), `err_o` is asserted.
+  - If `req_chk_i` is high during a request, protocol violations (e.g., unexpected response, timeout) trigger `err_o`.
+  - `err_o` is latched; once asserted, it remains high until reset.
+
+- **FIPS aggregation.** If multiple EDN responses are combined, `fips_o` is asserted only if all constituent responses are FIPS-approved. A single non-FIPS response makes the aggregate non-FIPS.
+
+- **Reset behavior.** On reset in either domain:
+  - `ack_o` is deasserted.
+  - `err_o` is cleared.
+  - Internal request state is cleared.
+  - CDC synchronizers are reset to known states.
+
+- **CDC safety.** All cross-domain signals use multi-stage synchronizers and gray-coded or protocol-based handshakes to prevent metastability. No combinational paths cross clock boundaries.
+
+## Clock and Reset Domains
+
+- Two independent synchronous clock domains: local request (`clk_i`) and EDN (`clk_edn_i`).
+- Two independent asynchronous resets: `rst_ni` and `rst_edn_ni`.
+
+## Example: Request and response (OutWidth = 32, single EDN response)
+
+| Local Cycle | `req_i` | `ack_o` | `data_o` | EDN Cycle | `edn_i.edn_bus` | `edn_i.edn_valid` | `data_o` (local) |
+|-----------|--------|--------|---------|-----------|-------------------|-----------------|----------|
+| 0 | 0 | 0 | × | 0 | — | 0 | × |
+| 1 | 1 | 1 (next) | × | 1 | — | 0 | × |
+| 2 | 0 | 1 | × | 2 | `32'hDEADBEEF` | 1 | × |
+| 3 | 0 | 0 (next) | × | 3 | — | 0 | × |
+| 4 | 0 | 0 | `32'hDEADBEEF` | 4 | — | 0 | `32'hDEADBEEF` |
+
+In local cycle 1, `req_i` is asserted. In EDN cycle 2, the response arrives with valid entropy. In local cycle 4, after CDC synchronization, the data is available on `data_o` and `ack_o` drops.

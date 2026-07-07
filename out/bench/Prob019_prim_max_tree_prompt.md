@@ -1,0 +1,68 @@
+Design a module called TopModule. This module is a parallel maximum-finding tree: it computes the maximum value among multiple inputs and returns both the maximum value and the index of the input that contains it.
+
+## Overview
+
+TopModule performs a tree-based reduction to find the maximum value among multiple inputs, each with an associated validity flag. The output includes the maximum value, the index (source position) of that maximum, and a valid flag indicating whether any input was valid. The comparison is based on unsigned arithmetic.
+
+## Parameters
+
+| Parameter | Meaning | Default |
+|-----------|---------|---------|
+| `NumSrc`  | Number of input values to compare. | 32 |
+| `Width`   | Width of each input value, in bits. | 8 |
+| `SrcWidth` | Width of the output index, in bits. Derived as `$clog2(NumSrc)`. | Derived |
+
+## Interface
+
+| Port          | Direction | Width        | Description |
+|---------------|-----------|--------------|-------------|
+| `clk_i`       | input     | 1            | Clock (unused; present for interface compatibility). |
+| `rst_ni`      | input     | 1            | Reset (unused; present for interface compatibility). |
+| `values_i`    | input     | `NumSrc × Width` | Array of `NumSrc` input values, each `Width` bits wide. Values are compared using unsigned magnitude. |
+| `valid_i`     | input     | `NumSrc`     | Validity flags for each input. `valid_i[i]` is high if `values_i[i]` should be considered in the comparison. |
+| `max_value_o` | output    | `Width`      | Maximum value among all valid inputs. If no inputs are valid, the result is 0. |
+| `max_idx_o`   | output    | `SrcWidth`   | Index of the input that contains the maximum value. If no inputs are valid, the result is 0. |
+| `max_valid_o` | output    | 1            | Valid flag: high if at least one input had `valid_i[i] = 1`. |
+
+## Behavioral Requirements
+
+**Maximum Comparison:**
+- All input values are compared using unsigned integer magnitude (0 < 1 < 2 < ... < 2^Width-1).
+- `max_valid_o` is high if and only if at least one bit of `valid_i` is asserted.
+- `max_value_o` is the value of the input that is largest among all inputs marked valid.
+- If no inputs are valid (`valid_i` is all zeros), `max_value_o` is zero.
+
+**Index Selection:**
+- `max_idx_o` is the zero-based index of the input that contains the maximum value.
+- If multiple inputs have the same maximum value, the index of the **last (highest-indexed) occurrence** is returned. This is due to the tree traversal order: when two values are equal, the right (higher-indexed) path is preferred.
+- If no inputs are valid, `max_idx_o` is zero.
+
+**Tree Structure:**
+- The comparison is performed using a binary tree to achieve parallel reduction.
+- The module is combinational; clock and reset ports are unused but present for interface uniformity.
+
+**Valid Propagation:**
+- A valid output is produced whenever at least one input is marked valid.
+
+## Example: NumSrc=4, Width=8
+
+| `values_i` | `valid_i` | `max_value_o` | `max_idx_o` | `max_valid_o` | Comment |
+|------------|-----------|---------------|-------------|---------------|---------| 
+| [10, 20, 30, 40] | 1111 | 40 | 3 | 1 | Max = 40 at index 3. |
+| [10, 20, 30, 40] | 1100 | 40 | 3 | 1 | Only indices 2,3 valid; max = 40 at index 3. |
+| [50, 50, 50, 50] | 1111 | 50 | 3 | 1 | All equal; highest index 3 is returned. |
+| [10, 20, 30, 40] | 1000 | 40 | 3 | 1 | Only index 3 valid; max = 40. |
+| [10, 20, 30, 40] | 0000 | 0 | 0 | 0 | No inputs valid; max = 0, index = 0, valid = 0. |
+| [255, 100, 200, 100] | 1111 | 255 | 0 | 1 | Max = 255 at index 0. |
+| [100, 255, 100, 255] | 1111 | 255 | 3 | 1 | Two 255 values at indices 1,3; highest index 3 returned. |
+
+## Latency and Throughput
+
+- The maximum detection is **combinational** (tree-based reduction).
+- Output updates immediately when inputs change.
+- There is no pipeline latency.
+- Throughput is one result per clock cycle (all inputs and outputs are combinational).
+
+## Tie-Breaking Rule
+
+When multiple inputs hold the same maximum value, the implementation selects the **highest index**. This is a consequence of the tree structure where the right (higher-indexed) branch is preferred during comparison. Applications that require a different tie-break rule (e.g., lowest index first) should implement external logic to remap the result.

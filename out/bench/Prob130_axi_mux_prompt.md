@@ -1,0 +1,50 @@
+Design a module called TopModule. This module is an N-to-1 multiplexer that combines multiple AXI4 master ports onto a single AXI4 slave port. It arbitrates request access and properly demultiplexes responses using transaction IDs.
+
+## Overview
+
+TopModule is an AXI4 mux. Multiple independent AXI4 masters present requests on separate slave ports; these are combined and forwarded onto a single AXI4 master port. The module uses round-robin or priority arbitration to select which master's address (AW/AR) drives the master port in each cycle. Transaction IDs are tracked internally so that when responses arrive, they can be correctly routed back to the originating master. Optional register slices can be inserted after arbitration and on response paths for timing relief.
+
+## Parameters
+
+| Parameter | Meaning |
+|-----------|---------|
+| `NoSlvPorts` | Number of AXI4 master ports to be muxed. |
+| `SlvAxiIDWidth` | Width of ID field in slave-side requests (may differ from master). |
+| `slv_*_chan_t` | Struct types for slave-side channels (address, write data, responses). |
+| `mst_*_chan_t` | Struct types for master-side channels (may be wider or narrower). |
+| `MaxWTrans` | Maximum outstanding write transactions. |
+| `FallThrough` | Register slice behavior (fall-through vs. standard). |
+| `SpillAw`, `SpillW`, `SpillB`, `SpillAr`, `SpillR` | Enable register slices on each channel. |
+
+## Interface
+
+| Port | Direction | Type | Description |
+|------|-----------|------|-------------|
+| `clk_i` | input | - | Clock. |
+| `rst_ni` | input | - | Active-low reset. |
+| `slv_req_i[NoSlvPorts-1:0]` | input array | `slv_req_t` | AXI4 requests from each master: AW/W/AR channels. |
+| `slv_resp_o[NoSlvPorts-1:0]` | output array | `slv_resp_t` | AXI4 responses to each master: B/R channels + ready signals. |
+| `mst_req_o` | output | `mst_req_t` | Multiplexed AXI4 request to the single slave. |
+| `mst_resp_i` | input | `mst_resp_t` | AXI4 response from the slave. |
+
+## Behavioral requirements
+
+- **Arbitration.** When multiple masters assert requests on the same channel, arbitration logic selects one. Round-robin or fixed priority is typically used (implementation-dependent). The selected master's request is forwarded.
+- **ID remapping.** Each slave port's transaction ID is recorded along with the port index. When a response with a remapped ID arrives from the master, the module uses the recorded mapping to demultiplex the response to the correct slave port.
+- **Channel arbitration per channel.** AW and AR are arbitrated independently; W is arbitrated based on the port associated with the accepted AW.
+- **Ordering and deadlock prevention.** Write data (W) is only forwarded if there is an outstanding AW from the same port. Read data (R) is routed based on ID. The module tracks pending transactions to avoid deadlock.
+- **Back-pressure.** If the master's ready signal is low, all slave ready signals go low (or are gated appropriately based on the selected arbitration state).
+- **Reset behavior.** On reset, arbitration state and ID tracking tables are cleared.
+
+## Throughput and latency
+
+- **Arbitration latency.** One cycle (or more if register slices are enabled).
+- **Throughput.** Limited by the master port's bandwidth and arbitration fairness.
+
+## Clock and reset domains
+
+Single clock domain.
+
+## Example behavior
+
+With `NoSlvPorts=2`, master 0 sends write address ID=3, and master 1 sends write address ID=2. If master 0 wins arbitration, its request (with a remapped ID, say 0) is sent to the master. When the response comes back with that remapped ID, it is demultiplexed to master 0 with the original ID=3 restored.

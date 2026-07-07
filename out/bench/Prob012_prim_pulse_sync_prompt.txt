@@ -1,0 +1,68 @@
+Design a module called TopModule. This module synchronizes a single-bit pulse signal across two asynchronous clock domains using level-toggle detection and gray-coded crossing.
+
+Overview
+
+TopModule transfers a brief pulse from a source clock domain to a destination clock domain. Rather than directly synchronizing the pulse (which may be too brief to detect reliably in the faster clock domain), the module converts the pulse to a level toggle in the source domain, synchronizes the toggled level to the destination domain via a 2-stage gray-coded synchronizer, and then extracts the pulse by detecting the level transition.
+
+Parameters
+
+None; behavior is hard-coded.
+
+Interface
+
+  Port         Direction   Width   Description  
+ ------------ ----------- ------- ------------- 
+  clk_src_i    input       1       Source clock domain.  
+  rst_src_ni   input       1       Source domain asynchronous reset (active low).  
+  src_pulse_i   input      1       Input pulse to synchronize; transitions to high for one or more source clock cycles.  
+  clk_dst_i   input       1       Destination clock domain.  
+  rst_dst_ni   input       1       Destination domain asynchronous reset (active low).  
+  dst_pulse_o   output     1       Synchronized pulse output in destination domain; asserts high for one destination clock cycle.  
+
+Clocking and Reset
+
+- Source clock domain: Runs at any frequency. Reset is asynchronous, active-low rst_src_ni.
+- Destination clock domain: Runs at any frequency independent of the source. Reset is asynchronous, active-low rst_dst_ni.
+- Both domains may operate at different frequencies and phases; no synchronization of clock frequency or phase is assumed.
+
+Behavioral Requirements
+
+Pulse Detection and Level Toggle:
+- When src_pulse_i is high (for one or more source clock cycles), an internal level signal is toggled on the next rising edge of clk_src_i.
+- The pulse input must not occur continuously or at high frequency; software must ensure that no new pulse arrives before the prior pulse has been fully synchronized to the destination domain.
+
+Synchronization via 2-Stage Synchronizer:
+- The toggled level is passed through a 2-stage flip-flop synchronizer clocked by clk_dst_i, with reset rst_dst_ni.
+- This synchronizer introduces a 2-cycle latency (relative to the destination clock) and safely crosses clock domains using double-register flopping.
+
+Pulse Extraction in Destination Domain:
+- In the destination domain, the synchronized level is XORed with its delayed-by-one-cycle value to extract the pulse.
+- When the synchronized level changes (i.e., the toggle becomes visible), a single-cycle pulse is generated.
+- dst_pulse_o is high for exactly one destination clock cycle following the level transition.
+
+Reset Behavior:
+- On reset of either domain, output registers are cleared. Both src_pulse_i and dst_pulse_o must not assert immediately after reset release.
+- The module does not depend on reset synchronization between domains.
+
+No Output Overlap:
+- dst_pulse_o is guaranteed to be a single-cycle pulse; it cannot be high for consecutive cycles. The second toggle cannot occur until the prior pulse has propagated through the system.
+
+Timing and Latency
+
+From the moment src_pulse_i asserts (source clock cycle N) to the appearance of dst_pulse_o (destination clock cycle M):
+- Latency is 2 destination clock cycles (plus skew from the 2-stage synchronizer).
+- The exact cycle count depends on the phase relationship between clocks.
+
+Example Scenario
+
+Assume:
+- Source clock frequency: 100 MHz.
+- Destination clock frequency: 50 MHz.
+- A pulse on src_pulse_i lasting 1 source cycle.
+
+Expected behavior:
+1. At source cycle N, src_pulse_i is asserted.
+2. At the rising edge of clk_src_i after cycle N, the internal level toggles from low to high.
+3. The high level crosses the clock boundary via the 2-stage synchronizer (2 destination cycles of latency).
+4. In the destination domain, once the new level is stable, the XOR with the previous level value produces a high dst_pulse_o for exactly 1 cycle.
+5. dst_pulse_o then returns to low and remains low until the next pulse is received in the source domain.

@@ -1,0 +1,62 @@
+Design a module called TopModule. This module is a RISC-V mtime/mtimecmp timer: it maintains
+a 64-bit machine time counter and compares it against a programmable threshold, asserting an
+interrupt when the counter reaches or exceeds the compare value.
+
+Overview
+
+TopModule implements a RISC-V-compatible timer suitable for use in embedded systems and
+processors. It provides a 64-bit machine time register (mtime) that increments every cycle,
+and a 64-bit compare register (mtimecmp) that is programmed via memory-mapped registers. When
+mtime >= mtimecmp, an interrupt is asserted. The module is fully synchronous, controlled by
+TileLink register access, and supports lifecycle gating and optional RACL (Role-Access Control
+List) policies for register access.
+
+Parameters
+
+  Parameter   Meaning   Constraint  
+ ----------- --------- ------------ 
+  AlertAsyncOn   Alert asynchronous enable mask.   Width NumAlerts; each bit selects async (1) or sync (0) behavior.  
+  AlertSkewCycles   Clock cycles of alert timing skew.   Typically 1.  
+  EnableRacl   Enable role-based access control on registers.   0 = disabled, 1 = enabled.  
+  RaclErrorRsp   RACL error response mode.   Defaults to EnableRacl value.  
+  RaclPolicySelVec   RACL policy selection vector for each register.   Array of top_racl_pkg::racl_policy_sel_t, one per register.  
+
+Interface
+
+  Port   Direction   Width   Description  
+ ------ ----------- ------- ------------- 
+  clk_i   input   1   System clock.  
+  rst_ni   input   1   Active-low asynchronous reset.  
+  tl_i   input   tlul_h2d_t   TileLink host-to-device.  
+  tl_o   output   tlul_d2h_t   TileLink device-to-host.  
+  alert_rx_i   input   alert_rx_t[NumAlerts-1:0]   Alert RX array for ping/ack protocol.  
+  alert_tx_o   output   alert_tx_t[NumAlerts-1:0]   Alert TX array for alert assertion.  
+  racl_policies_i   input   top_racl_pkg::racl_policy_vec_t   Lifecycle role-access policies.  
+  racl_error_o   output   top_racl_pkg::racl_error_log_t   RACL access violation log.  
+  intr_timer_expired_hart0_timer0_o   output   1   Timer expired interrupt; asserted when mtime >= mtimecmp.  
+
+Behavioral requirements
+
+- Machine time (mtime) counter. TopModule maintains a 64-bit counter that increments by 1 on every clock cycle. The counter wraps around at 2^64. Mtime is readable and writable via TileLink register access.
+
+- Machine time compare (mtimecmp) register. A 64-bit register stores the compare threshold. Mtime is compared against this value combinationally; when mtime >= mtimecmp, the interrupt is asserted.
+
+- Interrupt assertion. The output intr_timer_expired_hart0_timer0_o is high when mtime >= mtimecmp. This is a level-sensitive interrupt; it remains asserted until mtime is incremented below mtimecmp (e.g., by writing a new compare value).
+
+- Register interface. Mtime and mtimecmp are accessed via TileLink registers. Register writes update the internal values synchronously; reads return the current value. Mtime may be written to set or reset the counter.
+
+- Optional RACL enforcement. When EnableRacl = 1, register access is controlled by role-based policies. Unauthorized accesses are logged in racl_error_o and may be denied (error response) based on RaclErrorRsp setting.
+
+- Lifecycle gating. The module is lifecycle-aware and may be gated or disabled based on system power state or lifecycle transitions, configured via the racl_policies_i input.
+
+- Alert support. The module can raise alerts for detected errors (e.g., register access violations). Alerts use dedicated alert_tx_o pins with ping/ack handshaking and respect the AlertAsyncOn mask.
+
+Example
+
+Configure a 1 ms timer interrupt on a 1 MHz clock:
+- Clock period: 1 µs, so 1 ms = 1000 cycles.
+- Initialize mtime = 0 via register write.
+- Write mtimecmp = 1000 via register write.
+- At cycle 1000, mtime reaches 1000, so intr_timer_expired_hart0_timer0_o asserts.
+- To clear the interrupt, write a new mtimecmp value (e.g., 2000) to continue counting.
+- mtime continues incrementing; interrupt deasserts when mtime < mtimecmp again.

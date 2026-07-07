@@ -1,0 +1,63 @@
+Design a module called TopModule. This module implements a sparse-encoded FSM state register with error detection, storing FSM state bits and flagging invalid state transitions.
+
+## Overview
+
+TopModule is a hardened FSM state flop that registers an enumerated state value and detects illegal or corrupted state values. The module uses internal redundant encoding to preserve non-overlapping state encodings and flags when the state diverges from any valid enumeration value, indicating a transient fault or corruption.
+
+## Parameters
+
+| Parameter | Meaning | Constraint |
+|-----------|---------|------------|
+| `Width` | State vector width, in bits. | ≥ 1; should accommodate the enumerated state type. |
+| `StateEnumT` | State enumeration type. | SystemVerilog type; defines the valid state values. |
+| `ResetValue` | Default state on reset. | `StateEnumT` value; must be a valid enumeration member. |
+| `EnableAlertTriggerSVA` | Enable assertion-based alert checks. | Bit; if 1, formal assertions validate state encoding integrity. |
+
+## Interface
+
+TopModule operates in a single clock domain with an active-low asynchronous reset.
+
+| Port | Direction | Width | Description |
+|------|-----------|-------|-------------|
+| `clk_i` | input | 1 | System clock. |
+| `rst_ni` | input | 1 | Active-low asynchronous reset. |
+| `state_i` | input | `StateEnumT` | Next state input; must be a valid enumeration value. |
+| `state_o` | output | `StateEnumT` | Current state output (registered, latched on clock edge). |
+
+## Behavioral requirements
+
+- **State registration.** On each rising clock edge, `state_o` is updated with `state_i`. The new state is registered and held until the next clock edge.
+
+- **State validation.** The module internally monitors whether the registered state matches any valid value in the `StateEnumT` enumeration. Valid states are those explicitly defined in the enum (e.g., `state_enum_t` with members like `State0`, `State1`, etc.).
+
+- **Error detection.** If the internal state does not match any valid enumeration value (indicating corruption or a transient fault), an internal error signal is generated. This detection is combinational and evaluates the current registered state.
+
+- **Error reporting.** While there is no explicit error output port, the error condition is made visible through:
+  - Formal assertions (if `EnableAlertTriggerSVA = 1`) that flag invalid state values.
+  - Behavior is suitable for integration with alerting or watchdog systems.
+  - Internal undefined-state detection function checks state membership in the enumeration.
+
+- **Reset behavior.** On reset (`rst_ni` low), `state_o` is initialized to `ResetValue`, which must be a valid enumeration member. After reset deassertion, the first registered state must be explicitly set via `state_i`.
+
+- **Sparse encoding.** The module is designed to work with sparse (non-consecutive) state encodings where unused bit patterns are invalid. The enumeration type defines which patterns are legal; all others are flagged as errors.
+
+- **Fault detection scope.** The module detects faults that corrupt the registered state bits (e.g., single-event upsets, bit flips). Faults that occur in combinational logic upstream of `state_i` before it reaches this flop are not detected; this flop hardens against state register corruption only.
+
+## Clock and Reset Domains
+
+- Single synchronous clock domain (`clk_i`).
+- Asynchronous active-low reset (`rst_ni`).
+
+## Example: StateEnumT with 3 valid values
+
+Suppose `StateEnumT` has valid values: `Idle = 2'b00`, `Active = 2'b01`, `Done = 2'b10` (and 2'b11 is invalid).
+
+| Cycle | `state_i` | `state_o` | Error Detected | Note |
+|-------|-----------|-----------|--------------|------|
+| 0 | Idle | Idle | 0 | Valid state |
+| 1 | Active | Active | 0 | Valid state |
+| 2 | Done | Done | 0 | Valid state |
+| 3 (fault) | (corrupted→2'b11) | 2'b11 | 1 | Illegal state; error flag set |
+| 4 | Idle | Idle | 0 | Recovery via valid input |
+
+If a transient fault flips a bit in the registered state (cycle 3), the module detects that the resulting state is not a member of `StateEnumT` and raises an error signal observable to downstream logic or assertions.

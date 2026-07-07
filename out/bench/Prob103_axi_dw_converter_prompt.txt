@@ -1,0 +1,96 @@
+Design a module called TopModule. This module implements an AXI4 data-width converter that transforms
+transactions between two different AXI4 data widths. It acts as a flexible adapter allowing systems
+with different data bus widths (e.g., 32-bit slave, 64-bit master) to communicate.
+
+Overview
+
+TopModule sits between an AXI4 slave with one data width and an AXI4 master with a different data width.
+The module handles burst splitting and merging as needed: if the slave sends wider data than the master
+can accept, the data is split into multiple smaller beats; if the slave sends narrower data, the module
+collects and merges multiple slave beats to form master beats. Address and length fields are adjusted
+to account for the different byte-enable granularity. The module maintains ID tracking to ensure responses
+are routed correctly and that in-flight transactions are properly accounted for.
+
+Parameters
+
+  Parameter   Meaning  
+ ----------- --------- 
+  SlaveDataWidth   Data width of the slave port, in bits.  
+  MasterDataWidth   Data width of the master port, in bits.  
+  aw_chan_t   Struct type for the AXI write-address channel.  
+  w_chan_t   Struct type for the AXI write-data channel.  
+  b_chan_t   Struct type for the AXI write-response channel.  
+  ar_chan_t   Struct type for the AXI read-address channel.  
+  r_chan_t   Struct type for the AXI read-data channel.  
+  axi_req_t   Struct type defining the complete AXI request.  
+  axi_resp_t   Struct type defining the complete AXI response.  
+  MaxTxns   Maximum number of in-flight write transactions.  
+
+Interface
+
+  Port   Direction   Type   Description  
+ ------ ----------- ------ ------------- 
+  clk_i   input   logic   Clock signal.  
+  rst_ni   input   logic   Asynchronous active-low reset.  
+  slv_req_i   input   axi_req_t   AXI4 request from the upstream slave (data width = SlaveDataWidth).  
+  slv_resp_o   output   axi_resp_t   AXI4 response to the upstream slave.  
+  mst_req_o   output   axi_req_t   AXI4 request to the downstream master (data width = MasterDataWidth). Address and length adjusted as needed.  
+  mst_resp_i   input   axi_resp_t   AXI4 response from the downstream master.  
+
+Behavioral requirements
+
+- Write-path data conversion.
+  - If SlaveDataWidth > MasterDataWidth (downsizing), the module splits each wide slave beat into
+    multiple narrow master beats. For example, 64-bit slave data is split into two 32-bit master beats.
+    The module collects all W beats and issues them to the master with adjusted last flags.
+  - If SlaveDataWidth < MasterDataWidth (upsizing), the module collects narrow slave beats and merges
+    them into wider master beats. The module buffers beats until it has collected enough to form a full
+    master beat, then issues it downstream.
+
+- Read-path data conversion.
+  - On downsizing, the master returns fewer beats with more data per beat. The module unpacks each wide
+    master beat into multiple narrow slave beats and returns them to the slave with adjusted last flags.
+  - On upsizing, the master returns narrower beats. The module collects beats from the master and merges
+    them into wider slave beats, presenting them with adjusted last flags.
+
+- Address adjustment. The address field in AW and AR reflects the target byte address. When data
+  widths differ, the address remains the same (referring to the same byte location), but the AXI size
+  field (log2 of bytes per beat) may differ between slave and master. For example, if the slave uses
+  size=2 (4 bytes) and the master uses size=3 (8 bytes), the converter must adjust expectations.
+
+- Length adjustment. The AW and AR length fields specify the number of beats. When data widths differ,
+  the number of beats also differs. For instance, a 4-beat 64-bit burst becomes an 8-beat 32-bit burst
+  during downsizing. The module adjusts length accordingly.
+
+- Byte-enable (strb) handling. During downsizing, the slave's byte-enable signals may not align with
+  master beat boundaries. The module reconstructs byte-enables per master beat. During upsizing, the
+  module accumulates byte-enables from multiple slave beats to form complete master byte-enables.
+
+- Write response collection. For downsized writes, multiple master W transactions map to a single
+  slave write. The module collects all corresponding B responses and returns a single B to the slave
+  (with status typically the worst of all B responses).
+
+- Read response collection. For upsized reads, multiple master R beats are merged into fewer slave
+  beats. The response status and other fields are preserved from the last beat (or aggregated).
+
+- Burst-type preservation. INCR, FIXED, and WRAP bursts are preserved in semantics; the converter
+  adapts only the beat counts and sizes.
+
+- Reset behavior. On rst_ni assertion, all buffering and tracking state resets.
+
+Clock and reset domains
+
+- Single clock domain: clk_i and rst_ni.
+
+Example behavior
+
+1. Downsize 64-bit → 32-bit write. Slave sends 4-beat AW (64-bit data, size=3, length=3) to master.
+   - Module converts to 8-beat AW (32-bit data, size=2, length=7).
+   - Each 64-bit slave W beat is split into two 32-bit master W beats.
+   - Master returns one B response per master beat (conceptually); module collects and merges into one B to slave.
+
+2. Upsize 32-bit → 64-bit read. Slave sends 2-beat AR (32-bit data, size=2, length=1) to master.
+   - Module converts to 4-beat AR (64-bit data, size=3, length=3)? No: actually, if upsizing, the slave
+     wants wider data, so fewer beats. Module requests 1-beat AR (64-bit data) from master.
+   - Master returns 1-beat R with 64-bit data.
+   - Module splits into 2-beat R responses (32-bit each) to slave.

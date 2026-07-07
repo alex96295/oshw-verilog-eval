@@ -1,0 +1,65 @@
+Design a module called TopModule. This module is a 4-phase request-acknowledge (req/ack) handshake synchronizer that safely coordinates a handshake transaction between two clock domains.
+
+## Overview
+
+TopModule implements a CDC-safe request-acknowledge protocol, transferring a 1-bit request pulse from a source clock domain to a destination clock domain with synchronized acknowledgment feedback. The module operates in two modes: Return-to-Zero (RZ) handshake or Non-Return-to-Zero (NRZ) handshake, selected by parameter. In both cases, the module uses 2-stage synchronizers to cross clock-domain boundaries. The RZ mode toggles request and acknowledgment lines, while the NRZ mode uses level-based transitions to indicate phase changes.
+
+## Parameters
+
+| Parameter | Meaning | Constraint |
+|-----------|---------|------------|
+| `EnRstChks` | Enable reset-related assertions. | 0 or 1 (bit). Default: 0. |
+| `EnRzHs` | Select Return-to-Zero (RZ) vs. Non-Return-to-Zero (NRZ) mode. | 0 or 1 (bit). Default: 0 (NRZ). |
+
+## Interface
+
+| Port          | Direction | Width | Description |
+|---------------|-----------|-------|-------------|
+| `clk_src_i`   | input     | 1     | Source clock domain. |
+| `rst_src_ni`  | input     | 1     | Active-low synchronous reset for source domain. |
+| `clk_dst_i`   | input     | 1     | Destination clock domain. |
+| `rst_dst_ni`  | input     | 1     | Active-low synchronous reset for destination domain. |
+| `req_chk_i`   | input     | 1     | Request check flag (used for assertions). |
+| `src_req_i`   | input     | 1     | Request input from source domain. |
+| `src_ack_o`   | output    | 1     | Acknowledgment feedback to source domain. |
+| `dst_req_o`   | output    | 1     | Request output to destination domain. |
+| `dst_ack_i`   | input     | 1     | Acknowledgment input from destination domain. |
+
+## Behavioral requirements
+
+### NRZ Mode (EnRzHs = 0)
+
+- **FSM operation.** Both source and destination sides run finite-state machines with two states: EVEN and ODD. The source FSM toggles the request signal when a handshake completes; the destination FSM toggles the acknowledgment signal.
+- **Request line.** The source FSM drives a registered request signal that toggles when `src_req_i` and `src_ack_o` are both asserted (handshake detected).
+- **Acknowledgment path.** The destination receives the toggled request via a 2-stage synchronizer. When the synchronized request differs from the current state, the destination FSM drives the acknowledgment line, which toggles back to the source via another 2-stage synchronizer.
+- **Handshake detection.** In each domain, a handshake is complete when the local request and acknowledgment lines differ by one toggle (indicating a transaction has been seen and acknowledged).
+- **Source side.** After handshake, the registered request signal remains at its current value until the next request from `src_req_i`. Output `src_ack_o` reflects the synchronized acknowledgment from the destination.
+- **Destination side.** After handshake, the destination resets back to the EVEN state and awaits the next toggled request.
+
+### RZ Mode (EnRzHs = 1)
+
+- **Pulse-based handshake.** Instead of toggling, request and acknowledgment lines pulse and return to low. The source FSM holds the request high when `src_req_i` is asserted and the synchronized acknowledgment is not yet received. Once acknowledgment arrives, the request is released.
+- **Destination side.** The destination detects the request pulse via a 2-stage synchronizer and responds by pulsing the acknowledgment line only when both the request is high and the acknowledgment is not yet asserted.
+
+### Common behavior (both modes)
+
+- **Reset.** On assertion of `rst_src_ni` or `rst_dst_ni`, the FSMs return to their initial states (LoSt for RZ, EVEN for NRZ).
+- **CDC safety.** All cross-domain signals use 2-stage flip-flop synchronizers to mitigate metastability.
+- **No deadlock.** The handshake protocol ensures both sides remain synchronized; once a request is initiated, the acknowledgment will eventually arrive.
+
+## Timing
+
+- **Latency.** Request propagation from source to destination: 2 cycles in destination clock. Acknowledgment feedback to source: 2 cycles in source clock. Total round-trip time is typically 4 to 6 cycles depending on clock ratios.
+- **Throughput.** One handshake per ~(2 + 2 + source + destination FSM latencies) cycles.
+
+## Example (NRZ mode)
+
+| Src Cycle | `src_req_i` | Reg req (driven) | Dst Cycle | Dst Req (synced) | `dst_req_o` (output) | Feedback (synced at src) | `src_ack_o` |
+|-----------|-------------|----------------------|-----------|------------------|----------------------|--------------------------|-------------|
+| 0         | 0           | 0                    | —         | 0                | 0                    | 0                        | 0           |
+| 1         | 1           | 1 (toggle on hs)     | 1         | 0 (meta)         | 0                    | 0                        | 0           |
+| 2         | 1           | 1                    | 2         | 1                | 1 (responds)         | 0 (meta)                 | 0           |
+| 3         | 1           | 1                    | 3         | 1                | 1                    | 1                        | 1 (ack)     |
+| 4         | 0           | 0 (toggle on hs)     | 4         | 0 (meta)         | 1                    | 1                        | 1           |
+
+Handshakes occur when both request and acknowledgment in a domain differ (toggle is detected).

@@ -1,0 +1,130 @@
+Design a module called TopModule. This module implements the SHA-3 padding block (pad10*1), generating the padding suffix for SHA-3/SHAKE messages and feeding it to the Keccak absorption engine.
+
+## Overview
+
+TopModule is the SHA-3 padding unit, responsible for appending the final padding block(s) to a SHA-3/SHAKE message. After the message has been absorbed, padding must be applied to:
+1. Append the domain separator byte (0x06 for SHA-3, 0x1F for SHAKE).
+2. Pad with zero bytes to reach the rate boundary.
+3. Append the final 0x80 byte to mark end-of-padding.
+
+The module orchestrates this padding, generating padding blocks and feeding them to the Keccak absorption engine (via keccak_valid_o, keccak_data_o, keccak_addr_o). It also controls the Keccak permutation (start/run/done signaling) to ensure the final padded block is properly absorbed and permuted before squeezing begins.
+
+## Parameters
+
+| Parameter | Meaning | Constraint |
+|-----------|---------|------------|
+| `EnMasking` | Enable 2-share masking. If 1, message and padding are masked. | bit, default 0. |
+| `Share` | Derived: 2 if EnMasking else 1. | int, read-only. |
+
+## Interface
+
+| Port | Direction | Width / Type | Description |
+|------|-----------|--------------|-------------|
+| `clk_i` | input | 1 | Clock. FSM, counters, and padding generation driven by rising edge. |
+| `rst_ni` | input | 1 | Async active-low reset. FSM and counters cleared. |
+| `msg_valid_i` | input | 1 | Message valid (from external message source). When asserted, msg_data_i is available. |
+| `msg_data_i` | input | [MsgWidth-1:0] × Share | Message data (typically 136 bytes for rate-1088; if Share=2, two shares). |
+| `msg_strb_i` | input | [MsgStrbW-1:0] | Message strobe (per-byte valid mask). |
+| `msg_ready_o` | output | 1 | Message ready. Asserted when module is ready to accept message data. |
+| `ns_data_i` | input | [NSRegisterSize*8-1:0] | Name/strength register. Controls padding domain and rate. |
+| `keccak_valid_o` | output | 1 | Keccak absorption valid. Asserted when keccak_data_o contains valid padding data. |
+| `keccak_addr_o` | output | [KeccakMsgAddrW-1:0] | Keccak absorption address (lane index, 0..24 for standard Keccak-f[1600]). |
+| `keccak_data_o` | output | [MsgWidth-1:0] × Share | Keccak absorption data (padding block words; if Share=2, two shares). |
+| `keccak_ready_i` | input | 1 | Keccak absorption ready. Asserted when Keccak engine is ready to accept padding data. |
+| `keccak_run_o` | output | 1 | Keccak run signal. Asserted to trigger Keccak-f permutation after padding is absorbed. |
+| `keccak_complete_i` | input | 1 | Keccak complete signal. Asserted when Keccak-f permutation is done. |
+| `mode_i` | input | sha3_mode_e (3 bits) | SHA-3 mode: SHA3_256, SHA3_384, SHA3_512, SHAKE128, SHAKE256. Determines domain separator. |
+| `strength_i` | input | keccak_strength_e (2 bits) | Keccak strength (128, 256 bits). Determines rate (and thus padding boundary). |
+| `start_i` | input | 1 | Start signal (from top-level SHA-3 controller). Initiates padding computation. |
+| `process_i` | input | 1 | Process signal. Triggers padding block generation and absorption. |
+| `done_i` | input | mubi4_t (multibit encoded) | Done signal (multibit encoded). When asserted, signals end of message; padding must be applied and final block permuted. |
+| `absorbed_o` | output | mubi4_t | Absorbed signal (multibit encoded). Asserted after padding is absorbed and permutation is complete. |
+| `lc_escalate_en_i` | input | lc_ctrl_pkg::lc_tx_t | Lifecycle escalation signal (for fault testing). |
+| `sparse_fsm_error_o` | output | 1 | FSM sparse encoding error. |
+| `msg_count_error_o` | output | 1 | Message count error. |
+
+## Behavioral requirements
+
+- **Padding definition (pad10*1).** After the message, padding is appended as:
+  ```
+  padded_message = message || domain_byte || 0x00 || ... || 0x00 || 0x80
+  ```
+  where:
+  - domain_byte = 0x06 for SHA-3 (SHA3_256, SHA3_384, SHA3_512).
+  - domain_byte = 0x1F for SHAKE (SHAKE128, SHAKE256).
+  - Zero bytes are inserted until the total length (message + padding) is a multiple of the rate.
+  - The final byte 0x80 marks the end of padding.
+
+- **Rate determination.** The rate (number of bytes that form one absorption block) is determined by mode_i and strength_i:
+  - SHA-3-256: rate = 1088 bits = 136 bytes.
+  - SHA-3-384: rate = 832 bits = 104 bytes.
+  - SHA-3-512: rate = 576 bits = 72 bytes.
+  - SHAKE128: rate = 1344 bits = 168 bytes.
+  - SHAKE256: rate = 1088 bits = 136 bytes.
+
+- **Padding generation.** The module receives the final partial message block (if any) via msg_data_i and msg_strb_i. It computes how many zero bytes are needed to reach the rate boundary, then appends the domain byte, zeros, and final 0x80. The padded data is fed to the Keccak engine via keccak_valid_o, keccak_data_o, keccak_addr_o.
+
+- **Absorption interface.** The module acts as a message source for the Keccak engine:
+  - keccak_valid_o: Asserted when padding data is ready (one 64-bit or 32-bit word at a time, depending on data path).
+  - keccak_data_o: Padding data word.
+  - keccak_addr_o: Lane address within the Keccak state (0..24).
+  - keccak_ready_i: Backpressure; if low, the module must wait before sending more data.
+
+- **FSM state machine (sparse-encoded).** The module cycles through states:
+  - StPadIdle: Waiting for start_i or process_i.
+  - StPrefix: Feeding domain byte and padding zeros to Keccak.
+  - StPrefixWait: Waiting for Keccak to accept prefix data.
+  - StMessage: Forwarding remaining external message (if any) to Keccak.
+  - StMessageWait: Waiting for Keccak to accept message data.
+  - StPadding: Feeding final zero bytes and 0x80.
+  - StPaddingWait: Waiting for Keccak to accept padding.
+  - StRun: Triggering Keccak-f permutation.
+  - StDone: Padding complete; waiting for Keccak permutation to finish.
+
+- **Masking (EnMasking=1).** If enabled, padding data is split into two shares. Zero bytes are represented as (0, 0) in the shares; domain and 0x80 bytes are represented in the first share (or distributed per the masking scheme). The module preserves the share structure and feeds masked data to the Keccak engine.
+
+- **Control flow.** The module interacts with the top-level SHA-3 controller:
+  - process_i triggers padding computation.
+  - done_i signals end-of-message (multibit encoded for fault tolerance).
+  - absorbed_o is asserted (multibit encoded) when padding is absorbed and Keccak-f is complete.
+  - keccak_run_o is asserted to start the final Keccak-f permutation.
+  - keccak_complete_i is monitored to detect completion.
+
+- **Error detection.** The module includes sparse FSM encoding and error detection:
+  - sparse_fsm_error_o: FSM state invalid.
+  - msg_count_error_o: Message counter corrupted (e.g., overflow).
+
+## Clock domain
+
+Single clock domain driven by `clk_i`; asynchronous reset via `rst_ni`.
+
+## Latency
+
+- Padding generation: 1–N cycles depending on rate and final message size (N = rate / data_width, typically 17–21 cycles for rate-1088 with 64-bit data path).
+- Keccak permutation: ~24 cycles (delegated to Keccak engine).
+- Total: ~25–50 cycles from done_i asserted to absorbed_o asserted.
+
+## Example
+
+Scenario: Apply padding to a SHA-3-256 message of 1000 bits (125 bytes), triggering Keccak permutation.
+
+Assumptions:
+- Mode = SHA3_256, strength = 256.
+- Rate = 1088 bits = 136 bytes.
+- Message is 125 bytes (1000 bits); requires 11 bytes padding to reach 136 bytes.
+- Data path = 64 bits = 8 bytes per cycle.
+
+| Cycle | Input | FSM State | Operation | Output | Notes |
+|-------|-------|-----------|-----------|--------|-------|
+| 0 | process=HIGH, done=HIGH | Idle → Prefix | - | - | Padding computation starts. Final message is less than rate. |
+| 1 | - | Prefix | Compute: domain=0x06, pad_len=11 bytes. | keccak_valid=HIGH, keccak_data=0x06 || 0x00...00 (8 bytes) | First padding chunk: domain + zeros. |
+| 2 | keccak_ready=HIGH | Prefix | - | keccak_valid=HIGH, keccak_data=(6 more zeros) || 0x80 | Second padding chunk: remaining zeros + final 0x80. |
+| 3 | keccak_ready=HIGH | PrefixWait → Run | - | keccak_run=HIGH | Trigger Keccak-f[1600] permutation. |
+| 4-27 | - | Run | (Keccak-f executing) | (none) | 24-cycle permutation in progress. |
+| 28 | keccak_complete=HIGH | Done | - | absorbed=HIGH (multibit encoded) | Padding complete; Keccak-f done. Ready for squeeze. |
+
+Constraints:
+- mode_i and strength_i must be stable during padding computation.
+- done_i must be asserted exactly once per hash computation.
+- keccak_ready_i must provide backpressure; the module must not overflow the Keccak engine.
+- For EnMasking=1, msg_data_i is two shares; the module must distribute domain byte, zeros, and 0x80 across shares per the masking scheme.

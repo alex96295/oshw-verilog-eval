@@ -1,0 +1,50 @@
+Design a module called TopModule. This module is a variant of the AXI4 crossbar that exposes per-connection unmuxed slave ports, allowing point-to-point connections to be directly observed and controlled.
+
+Overview
+
+TopModule is an AXI4 crossbar with unmuxed slave ports. Instead of internally multiplexing slave responses back to a single interface per master, this variant exposes independent response ports for each (master, slave) connection pair. This allows test benches and verification code to directly interact with individual master-to-slave paths without the complexity of response demultiplexing. Address routing and request arbitration are similar to the standard crossbar, but responses are presented on dedicated per-connection ports.
+
+Parameters
+
+  Parameter   Meaning  
+ ----------- --------- 
+  Cfg   xbar_cfg_t struct: number of masters, slaves, address rules, ID widths, etc.  
+  ATOPs   Enable atomic operations.  
+  Connectivity   Bit matrix [NoSlvPorts-1:0][NoMstPorts-1:0]: which master-slave pairs are connected.  
+  Channel struct types   aw_chan_t, w_chan_t, b_chan_t, ar_chan_t, r_chan_t, req_t, resp_t.  
+
+Interface
+
+  Port   Direction   Type   Description  
+ ------ ----------- ------ ------------- 
+  clk_i   input   -   Clock.  
+  rst_ni   input   -   Active-low reset.  
+  slv_req_i[NoMstPorts-1:0]   input array   req_t   AXI4 requests from masters.  
+  slv_resp_o[NoMstPorts-1:0]   output array   resp_t   AXI4 responses to masters (empty or muxed from per-connection ports).  
+  slv_req_o[NoMstPorts-1:0][NoSlvPorts-1:0]   output array   req_t   Per-connection request to each (master, slave) pair.  
+  slv_resp_i[NoMstPorts-1:0][NoSlvPorts-1:0]   input array   resp_t   Per-connection response from each (master, slave) pair.  
+  mst_req_o[NoSlvPorts-1:0]   output array   req_t   AXI4 requests to slaves (aggregated from all masters targeting that slave).  
+  mst_resp_i[NoSlvPorts-1:0]   input array   resp_t   AXI4 responses from slaves.  
+
+Behavioral requirements
+
+- Request routing. Each master's AW/AR is routed to the appropriate slave(s) based on address matching. For each (master, slave) pair with Connectivity enabled, a separate request path is created.
+- Per-connection tracking. Transaction IDs and ordering are tracked per (master, slave) connection, independent of other pairs.
+- Response demultiplexing. Responses from a slave are demultiplexed back to the correct master(s) based on ID and connection state, then sent back through the per-connection response port.
+- Slave port aggregation. Multiple master-to-slave paths targeting the same slave are arbitrated and combined into a single request stream to that slave. Responses from the slave are broadcast back to all connected masters (or routed by ID).
+- Unmuxed observation. The per-connection ports allow test benches to directly observe and control individual master-slave interactions without dealing with response demultiplexing at the master level.
+- Connectivity filtering. If Connectivity[s][m] = 0, the pair (master m, slave s) is inactive; requests are blocked or held.
+- Reset behavior. On reset, all internal state is cleared.
+
+Throughput and latency
+
+- Latency. Similar to standard crossbar; depends on LatencyMode and register slices. Typically 1-4 cycles.
+- Throughput. Bounded by slave bandwidth and arbitration among masters targeting the same slave.
+
+Clock and reset domains
+
+Single clock domain.
+
+Example behavior
+
+With 2 masters and 2 slaves, master 0 sends AW to address 0x1000 (routed to slave 0). The crossbar forwards this on the slv_req_o[0][0] port (master 0, slave 0). The test bench can directly see and control this request/response pair. Simultaneously, master 1 can send AW to slave 1 on slv_req_o[1][1]. When slave 0 responds, the response is routed back through slv_resp_i[0][0] to master 0.

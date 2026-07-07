@@ -1,0 +1,73 @@
+package:
+  name: axi_bench
+
+# ---------------------------------------------------------------------------------------
+# The PULP axi library and its transitive dependencies are vendored (not submodules), for
+# the same reproducibility reason as OpenTitan: a fresh checkout needs no submodule init and
+# no network.  axi is not self-contained — its RTL instantiates common_cells modules and
+# `include's common_cells/*.svh — so all four packages are vendored together, pinned to the
+# exact revisions axi's own Bender.lock resolved.
+#
+# `bender vendor init` clones each upstream at the pinned rev, copies the include_from_upstream
+# globs into vendor/<name>/, and applies any patches from patch_dir.
+# ---------------------------------------------------------------------------------------
+vendor_package:
+  - name: common_cells
+    target_dir: vendor/common_cells
+    upstream:
+      git: "https://github.com/pulp-platform/common_cells.git"
+      rev: "1281545696eb3fcba50ec5b4275993476a3c710e"   # v1.40.0 (axi Bender.lock)
+    patch_dir: patches/common_cells
+    include_from_upstream:
+      - "src/**/*.sv"
+      - "include/**/*.svh"
+
+  - name: common_verification
+    target_dir: vendor/common_verification
+    upstream:
+      git: "https://github.com/pulp-platform/common_verification.git"
+      rev: "fb1885f48ea46164a10568aeff51884389f67ae3"   # v0.2.5 (axi Bender.lock)
+    patch_dir: patches/common_verification
+    include_from_upstream:
+      - "src/**/*.sv"
+
+  - name: tech_cells_generic
+    target_dir: vendor/tech_cells_generic
+    upstream:
+      git: "https://github.com/pulp-platform/tech_cells_generic.git"
+      rev: "3a3de73632a06826b1bd9c65a0a2e92b32016845"   # v0.2.14 (axi Bender.lock)
+    patch_dir: patches/tech_cells_generic
+    include_from_upstream:
+      - "src/**/*.sv"
+
+  - name: axi
+    target_dir: vendor/axi
+    upstream:
+      git: "https://github.com/pulp-platform/axi.git"
+      rev: "ba8680fcd061f12b7e41ed3460c801d465873604"   # the previously-tracked submodule commit
+    patch_dir: patches/axi
+    include_from_upstream:
+      - "src/**/*.sv"
+      - "include/**/*.svh"
+      - "test/**/*.sv"
+
+# axi/*.svh and common_cells/*.svh are `include'd across the RTL; expose both include dirs.
+export_include_dirs:
+  - vendor/axi/include
+  - vendor/common_cells/include
+
+# Slang (behind `bender pickle`) parses the whole set and resolves module/package deps
+# regardless of order; --top trims each pickle to reachable modules only.
+sources:
+  # tech_cells_generic first (leaf tech primitives), then common_cells, then verification, then axi
+  - target: rtl
+    files:
+      - vendor/tech_cells_generic/src/*.sv
+      - vendor/common_cells/src/*.sv
+      - vendor/axi/src/*.sv
+
+  # simulation/verification helpers (axi_test classes live here) — for TB pickling only
+  - target: test
+    files:
+      - vendor/common_verification/src/*.sv
+      - vendor/axi/test/*.sv

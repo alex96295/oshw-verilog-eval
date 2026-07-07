@@ -1,0 +1,53 @@
+Design a module called TopModule. This module synchronizes a wide data bus from a slow clock domain to a faster clock domain by capturing data only when the slow clock has a falling edge in the fast clock domain.
+
+## Overview
+
+TopModule is a specialized CDC synchronizer for heterogeneous clock domains where the destination clock is faster than the source clock. The module monitors the slow clock in the fast domain using a 2-stage synchronizer chain and detects slow clock falling edges (transitions from 1 to 0). Data is captured at the destination clock edge that immediately follows a slow clock falling edge, ensuring the source data has had maximum time to settle before sampling. The module assumes that data setup/hold times are respected by the source clock and destination clock frequency ratio.
+
+## Parameters
+
+| Parameter | Meaning | Constraint |
+|-----------|---------|------------|
+| `Width`   | Width of the data bus, in bits. | >= 1 (int unsigned). Default: 32. |
+
+## Interface
+
+| Port         | Direction | Width    | Description |
+|--------------|-----------|----------|-------------|
+| `clk_slow_i` | input     | 1        | Source (slow) clock. |
+| `clk_fast_i` | input     | 1        | Destination (fast) clock. |
+| `rst_fast_ni`| input     | 1        | Active-low asynchronous reset for fast domain. |
+| `wdata_i`    | input     | `Width`  | Write data from slow domain. |
+| `rdata_o`    | output    | `Width`  | Read data in fast domain. |
+
+## Behavioral requirements
+
+- **Slow clock synchronization.** The slow clock (`clk_slow_i`) is input to a 2-stage flip-flop synchronizer clocked by the fast clock. This produces a synchronized version (`sync_clk_slow`) that is metastability-hardened.
+- **Edge detection.** After synchronizing, the module captures the previous synchronized slow clock value on each fast clock edge. By comparing the current synchronized value to the previous, a falling edge is detected (current low, previous high).
+- **Data capture.** When a slow clock falling edge is detected, the input data (`wdata_i`) is captured into a register on the next fast clock edge. This ensures the data is latched at a point when it has had maximum dwell time in the slow domain.
+- **Output.** The captured data register is continuously driven to the output (`rdata_o`). The output reflects the most recently captured value.
+- **Reset behavior.** On assertion of `rst_fast_ni` (active-low, asynchronous), all fast-domain registers are reset to 0.
+- **Clock domains.** All registers operate in the fast clock domain.
+
+## Assumptions
+
+- The slow-to-fast clock frequency ratio is such that the minimum slow clock period contains multiple fast clock periods, allowing ample time for data to settle.
+- Data in the slow domain must be stable around each slow clock edge to avoid capture of transient values.
+- No explicit synchronization of the data bus itself is performed; the module relies on slow-domain timing to ensure setup/hold margins.
+
+## Timing example
+
+With `clk_fast_i` at 2x the frequency of `clk_slow_i`:
+
+| Fast Cycle | `clk_slow_i` | `wdata_i` | Sync0 | Sync1 (prior) | Sync2 (current) | Edge? | `rdata_o` |
+|------------|--------------|-----------|-------|-------------------------|----------------------|-------|----------|
+| 0          | 1            | 0xAA      | ?     | 1                       | 1                    | No    | 0x00     |
+| 1          | 1            | 0xAA      | 1     | 1                       | 1                    | No    | 0x00     |
+| 2          | 1            | 0xAA      | 1     | 1                       | 1                    | No    | 0x00     |
+| 3          | 0            | 0xBB      | 1 (meta) | 1                    | 0                    | Yes   | 0xAA     |
+| 4          | 0            | 0xBB      | 0     | 0                       | 0                    | No    | 0xBB     |
+| 5          | 0            | 0xBB      | 0     | 0                       | 0                    | No    | 0xBB     |
+| 6          | 1            | 0xCC      | 0     | 0                       | 1                    | No    | 0xBB     |
+| 7          | 1            | 0xCC      | 1 (meta) | 1                    | 1                    | No    | 0xBB     |
+
+At cycle 3, the synchronized slow clock transitions from 1 to 0 (falling edge), and `rdata_o` updates to the captured 0xAA on cycle 4. Cycle 7 shows the slow clock rising again; the next falling edge will capture 0xCC.

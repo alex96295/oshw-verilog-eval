@@ -1,0 +1,110 @@
+Design a module called TopModule. This module adapts a simple memory-like interface (with address and data buses, separate read and write ports) to an AXI4-Lite master port, allowing memory-like requesters to communicate over AXI4-Lite.
+
+## Overview
+
+TopModule converts a simple synchronous memory interface (read/write address inputs, write data input, read data output, control signals) into an AXI4-Lite master port. This is useful when integrating memory macros, embedded RAMs, or legacy memory-interface IP into an AXI4-Lite-based system. The module handles the protocol translation: memory read/write requests are converted to AXI4-Lite AR/AW transactions, data is routed appropriately, and responses are collected and presented back to the memory interface side.
+
+## Parameters
+
+| Parameter | Meaning | Constraint |
+|-----------|---------|------------|
+| `AxiAddrWidth` | Width of the AXI4-Lite address field, in bits. | ≥ 1; must match the memory address width. |
+| `AxiDataWidth` | Width of the AXI4-Lite data field, in bits. | ≥ 8; must match the memory data width. |
+| `Depth` | Memory depth, in addressable locations. | ≥ 1; used to check address bounds. |
+
+## Interface
+
+### Clock and Reset
+- `clk_i`: input, clock.
+- `rst_ni`: input, active-low asynchronous reset.
+
+### Memory-Like Interface (Synchronous)
+
+**Write Port:**
+- `mem_wr_addr_i`: input, logic `[AxiAddrWidth-1:0]`. Write address.
+- `mem_wr_data_i`: input, logic `[AxiDataWidth-1:0]`. Write data.
+- `mem_wr_strb_i`: input, logic `[AxiDataWidth/8-1:0]`. Write strobes (byte enables).
+- `mem_wr_valid_i`: input, logic. Write request valid.
+- `mem_wr_ready_o`: output, logic. Write request ready.
+- `mem_wr_resp_o`: output, logic `[1:0]`. Write response code.
+- `mem_wr_resp_valid_o`: output, logic. Write response valid.
+- `mem_wr_resp_ready_i`: input, logic. Write response ready.
+
+**Read Port:**
+- `mem_rd_addr_i`: input, logic `[AxiAddrWidth-1:0]`. Read address.
+- `mem_rd_valid_i`: input, logic. Read request valid.
+- `mem_rd_ready_o`: output, logic. Read request ready.
+- `mem_rd_data_o`: output, logic `[AxiDataWidth-1:0]`. Read data.
+- `mem_rd_resp_o`: output, logic `[1:0]`. Read response code.
+- `mem_rd_resp_valid_o`: output, logic. Read response valid.
+- `mem_rd_resp_ready_i`: input, logic. Read response ready.
+
+### AXI4-Lite Master Port (Downstream)
+- `axi_aw_addr_o`: output, logic `[AxiAddrWidth-1:0]`. Write address.
+- `axi_aw_valid_o`: output, logic. Write address valid.
+- `axi_aw_ready_i`: input, logic. Write address ready.
+
+- `axi_w_data_o`: output, logic `[AxiDataWidth-1:0]`. Write data.
+- `axi_w_strb_o`: output, logic `[AxiDataWidth/8-1:0]`. Write strobes.
+- `axi_w_valid_o`: output, logic. Write data valid.
+- `axi_w_ready_i`: input, logic. Write data ready.
+
+- `axi_b_resp_i`: input, logic `[1:0]`. Write response code.
+- `axi_b_valid_i`: input, logic. Write response valid.
+- `axi_b_ready_o`: output, logic. Write response ready.
+
+- `axi_ar_addr_o`: output, logic `[AxiAddrWidth-1:0]`. Read address.
+- `axi_ar_valid_o`: output, logic. Read address valid.
+- `axi_ar_ready_i`: input, logic. Read address ready.
+
+- `axi_r_data_i`: input, logic `[AxiDataWidth-1:0]`. Read data.
+- `axi_r_resp_i`: input, logic `[1:0]`. Read response code.
+- `axi_r_valid_i`: input, logic. Read data valid.
+- `axi_r_ready_o`: output, logic. Read data ready.
+
+## Behavioral Requirements
+
+- **Write Path.** When a write request arrives on the memory interface (`mem_wr_valid_i`), the module:
+  1. Generates an AW transaction on the AXI4-Lite master with `axi_aw_addr = mem_wr_addr_i`.
+  2. Simultaneously (or decoupled) generates a W transaction with `axi_w_data = mem_wr_data_i` and `axi_w_strb = mem_wr_strb_i`.
+  3. Collects the write response (B transaction) from the AXI master.
+  4. Returns the response to the memory interface with `mem_wr_resp_valid_o` and `mem_wr_resp_o`.
+
+- **Read Path.** When a read request arrives on the memory interface (`mem_rd_valid_i`), the module:
+  1. Generates an AR transaction on the AXI4-Lite master with `axi_ar_addr = mem_rd_addr_i`.
+  2. Collects the read response (R transaction) from the AXI master.
+  3. Returns the data and response to the memory interface with `mem_rd_data_o`, `mem_rd_resp_o`, and `mem_rd_resp_valid_o`.
+
+- **Decoupling.** AW and W requests may proceed independently (per AXI4-Lite spec); the module does not enforce strict ordering between them.
+
+- **Response Routing.** Write and read response codes are passed through unchanged. The module may synthesize DECERR responses if addresses are out of bounds (optional).
+
+- **Backpressure.** When the AXI4-Lite master is not ready, the memory interface `ready` signal is deasserted, causing the memory requestor to stall.
+
+- **Handshake Transparency.** Valid and ready signals on the memory side are synchronized with the AXI4-Lite master side. One-to-one transaction correspondence is maintained.
+
+- **Reset.** On release from reset (`rst_ni` assertion), all state is cleared and no transactions are pending.
+
+## Throughput and Latency
+
+- **Throughput:** One write and one read per clock cycle (if both ports are utilized and downstream is ready).
+- **Latency:** Latency is that of the downstream AXI4-Lite slave plus the protocol translation overhead (combinational or 1-2 cycles).
+
+## Clock and Reset Domains
+
+- All ports operate in the same `clk_i` domain.
+- Reset is asynchronous (`rst_ni`, active low).
+
+## Example Behavior
+
+1. Memory interface: write request to address 0x1000 with data 32'hABCD1234, strobes 4'hF.
+   - Module generates AXI AW to 0x1000 and W with data 0xABCD1234 (strobes 4'hF).
+   - AXI slave accepts and returns B with resp=OKAY.
+   - Module returns write response to memory interface.
+
+2. Memory interface: read request to address 0x2000.
+   - Module generates AXI AR to 0x2000.
+   - AXI slave returns R with data 32'hCAFEBABE (resp=OKAY).
+   - Module returns read data and response to memory interface.
+
+The module enables transparent integration of memory-like devices into AXI4-Lite systems.

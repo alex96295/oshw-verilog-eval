@@ -1,0 +1,46 @@
+Design a module called TopModule. This module splits a combined AXI4 interface into separate read-only and write-only AXI4 interfaces.
+
+Overview
+
+TopModule is an AXI4 read/write splitter. It takes a single full AXI4 port carrying both reads and writes, and presents two independent AXI4 interfaces: one for read-only transactions (AR/R channels) and one for write-only transactions (AW/W/B channels). This allows downstream components to be specialized for read or write traffic, simplifying their design.
+
+Parameters
+
+  Parameter   Meaning  
+ ----------- --------- 
+  axi_req_t   Type of AXI4 request struct (contains all address and data channels + valid flags).  
+  axi_resp_t   Type of AXI4 response struct (contains B and R channels + ready flags).  
+
+Interface
+
+  Port   Direction   Type   Description  
+ ------ ----------- ------ ------------- 
+  clk_i   input   -   Clock.  
+  rst_ni   input   -   Active-low reset.  
+  slv_req_i   input   axi_req_t   Combined AXI4 request from master: may contain AW/W and/or AR channels.  
+  slv_resp_o   output   axi_resp_t   AXI4 response to master: B and R channels.  
+  mst_read_req_o   output   axi_req_t   Read-only request to a read slave: AR channel with valid. Other fields held zero.  
+  mst_read_resp_i   input   axi_resp_t   Read response from slave: R channel.  
+  mst_write_req_o   output   axi_req_t   Write-only request to a write slave: AW and W channels with valid. Other fields held zero.  
+  mst_write_resp_i   input   axi_resp_t   Write response from slave: B channel.  
+
+Behavioral requirements
+
+- Channel splitting. AR from slv_req_i drives mst_read_req_o.ar. R from mst_read_resp_i drives slv_resp_o.r. AW/W from slv_req_i drive mst_write_req_o.aw/mst_write_req_o.w. B from mst_write_resp_i drives slv_resp_o.b.
+- Ready signal splitting. mst_read_resp_i.ar_ready drives slv_resp_o.ar_ready. mst_write_resp_i.aw_ready and mst_write_resp_i.w_ready drive slv_resp_o.aw_ready and slv_resp_o.w_ready.
+- Unused channels. AR field in write requests is held zero. AW/W fields in read requests are held zero. B is held zero in read response; R is held zero in write response.
+- Independent paths. Read and write transactions can proceed independently once split.
+- Combinational. Splitting is combinational.
+
+Throughput and latency
+
+- Latency. Combinational (zero).
+- Throughput. Independent read and write streams; total throughput is the sum of read and write bandwidths, limited by the master's ability to pipeline reads and writes.
+
+Clock and reset domains
+
+Single clock domain. Reset is provided but not strictly required for combinational logic.
+
+Example behavior
+
+A master sends an AXI4 request containing both AR (ID=1, address=0x1000) and AW (ID=2, address=0x2000) simultaneously. The splitter routes AR to the read slave and AW to the write slave. When responses arrive (R for ID=1, B for ID=2), they are combined back into the single response seen by the master.

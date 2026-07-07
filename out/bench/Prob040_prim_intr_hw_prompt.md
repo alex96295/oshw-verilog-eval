@@ -1,0 +1,64 @@
+Design a module called TopModule. This module implements interrupt status and control aggregation hardware that manages event-driven or status-driven interrupt signals with masking and test injection capabilities.
+
+## Overview
+
+TopModule is a lightweight interrupt aggregation primitive that combines hardware event inputs with software-controlled enable and test-injection logic. It maintains an interrupt status register and produces a final interrupt output. The module supports two modes: event-driven (latching on new events) and status-driven (combinational mirroring).
+
+## Parameters
+
+| Parameter | Meaning | Constraint |
+|-----------|---------|------------|
+| `Width` | Number of interrupt bits to aggregate. | ≥ 1; typically 1–32. |
+| `IntrT` | Interrupt type: "Event" (latching) or "Status" (combinational). | String; controls behavioral mode. |
+
+## Interface
+
+TopModule operates in a single clock domain with an active-low asynchronous reset.
+
+| Port | Direction | Width | Description |
+|------|-----------|-------|-------------|
+| `clk_i` | input | 1 | System clock. |
+| `rst_ni` | input | 1 | Active-low asynchronous reset. |
+| `event_intr_i` | input | `Width` | Hardware interrupt events from peripherals (active-high). |
+| `reg2hw_intr_enable_q_i` | input | `Width` | Software interrupt-enable mask. Bit set to 1 enables the corresponding interrupt. |
+| `reg2hw_intr_test_q_i` | input | `Width` | Software test-injection pattern; when `reg2hw_intr_test_qe_i` is asserted, these bits are ORed into the status. |
+| `reg2hw_intr_test_qe_i` | input | 1 | Test strobe: when asserted, inject `reg2hw_intr_test_q_i` into status on the next clock edge. |
+| `reg2hw_intr_state_q_i` | input | `Width` | Current interrupt status register read from software. |
+| `hw2reg_intr_state_de_o` | output | 1 | Update enable for status register: asserted if new events or test injections update status. |
+| `hw2reg_intr_state_d_o` | output | `Width` | New status value; written to the interrupt status register when `hw2reg_intr_state_de_o` is high. |
+| `intr_o` | output | `Width` | Final interrupt output; each bit is (status bit & enable bit). |
+
+## Behavioral requirements
+
+**Event mode** (`IntrT == "Event"`):
+
+- **Event latching.** New hardware events from `event_intr_i` are ORed with test injections (if `reg2hw_intr_test_qe_i` is asserted) to form the new-event signal.
+- **Status update.** The new-event signal is ORed with the current status `reg2hw_intr_state_q_i`, then returned via `hw2reg_intr_state_d_o`. This implements a latching register: once an event sets a bit, it remains set until cleared by software.
+- **Update strobe.** `hw2reg_intr_state_de_o` is asserted if any new event or test injection bit is high, signaling to the register block that status has changed.
+- **Interrupt output.** `intr_o[i] = status[i] & enable[i]` (combinational AND of status and mask).
+
+**Status mode** (`IntrT == "Status"`):
+
+- **Combinational passthrough.** `intr_o` directly reflects the hardware events, masked by enable bits: `intr_o[i] = event_intr_i[i] & enable[i]`. There is no latching; events are continuous signals.
+- **Test injection.** When `reg2hw_intr_test_qe_i` is asserted, ORed test bits update the status register, but do not affect the real-time interrupt output (which remains tied to live events).
+
+**Common to both modes:**
+
+- **Reset behavior.** On reset (`rst_ni` low), all status bits clear, and `hw2reg_intr_state_de_o` is deasserted.
+- **Enable masking.** The final `intr_o` output is always gated by `reg2hw_intr_enable_q_i`. Disabled bits output 0 regardless of status or events.
+
+## Clock and Reset Domains
+
+- Single synchronous clock domain (`clk_i`).
+- Asynchronous active-low reset (`rst_ni`).
+
+## Example (Event mode, Width = 4)
+
+| Cycle | `event_intr_i` | `reg2hw_intr_enable_q_i` | `reg2hw_intr_test_qe_i` | `reg2hw_intr_test_q_i` | `reg2hw_intr_state_q_i` | `intr_o` | `hw2reg_intr_state_de_o` | `hw2reg_intr_state_d_o` |
+|-------|--------------|------------------------|----------------------|----------------------|----------------------|---------|------------------------|------------------------|
+| 0 | `4'b0000` | `4'b1111` | 0 | — | `4'b0000` | `4'b0000` | 0 | `4'b0000` |
+| 1 | `4'b0101` | `4'b1111` | 0 | — | `4'b0000` | `4'b0101` | 1 | `4'b0101` |
+| 2 | `4'b0000` | `4'b1111` | 0 | — | `4'b0101` | `4'b0101` | 0 | `4'b0101` |
+| 3 | `4'b0000` | `4'b1010` | 1 | `4'b0100` | `4'b0101` | `4'b0000` | 1 | `4'b0101` |
+
+In cycle 1, a new event arrives; status latches `4'b0101`. In cycle 3, test injection with `4'b0100` is enabled, but only bits [0, 2] of the result pass through the enable mask, yielding `intr_o = 4'b0000` (bits [1, 3] disabled).

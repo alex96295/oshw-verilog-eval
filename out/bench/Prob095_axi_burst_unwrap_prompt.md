@@ -1,0 +1,91 @@
+Design a module called TopModule. This module implements an AXI4 WRAP-to-INCR burst converter: it
+detects write and read bursts with the WRAP burst type and converts them to INCR (incrementing) bursts,
+recalculating addresses to account for the difference in wrapping semantics.
+
+## Overview
+
+TopModule sits on an AXI4 bus and transparently converts address bursts. When a slave sends a read or
+write address with burst type WRAP, TopModule converts it to burst type INCR with the same starting
+address and length. The WRAP burst naturally stops incrementing at a boundary (based on size and length);
+INCR continues incrementing through that boundary. TopModule adjusts the address calculation internally
+so that the master receives the correct sequence of addresses. All other channels (W for writes, R for
+reads) pass through with no modification. The module is purely combinational per-transaction but maintains
+state to route responses back correctly.
+
+## Parameters
+
+| Parameter | Meaning |
+|-----------|---------|
+| `AxiIdWidth` | Width of the AXI ID field. |
+| `aw_chan_t` | Struct type for the AXI write-address channel. |
+| `w_chan_t` | Struct type for the AXI write-data channel. |
+| `b_chan_t` | Struct type for the AXI write-response channel. |
+| `ar_chan_t` | Struct type for the AXI read-address channel. |
+| `r_chan_t` | Struct type for the AXI read-data channel. |
+| `axi_req_t` | Struct type defining the complete AXI request. |
+| `axi_resp_t` | Struct type defining the complete AXI response. |
+
+## Interface
+
+| Port | Direction | Type | Description |
+|------|-----------|------|-------------|
+| `clk_i` | input | logic | Clock signal. |
+| `rst_ni` | input | logic | Asynchronous active-low reset. |
+| `slv_req_i` | input | `axi_req_t` | AXI4 request from upstream slave. |
+| `slv_resp_o` | output | `axi_resp_t` | AXI4 response to upstream slave. |
+| `mst_req_o` | output | `axi_req_t` | AXI4 request to downstream master. |
+| `mst_resp_i` | input | `axi_resp_t` | AXI4 response from downstream master. |
+
+## Behavioral requirements
+
+- **Write-address WRAP detection and conversion.** When the slave sends an AW transaction with
+  `burst_type == WRAP`, TopModule:
+  - Accepts the transaction (forwards `aw_valid` → `mst_req_o.aw_valid`).
+  - Changes the `burst_type` field to INCR.
+  - Adjusts the address (or implicitly routes address increments) such that the master sees
+    the correct address sequence for an INCR burst of the same length starting at the original
+    WRAP address. No address sent to the master; instead, the module adjusts its internal
+    address-generation logic.
+  - Forwards all other fields (ID, size, length, lock, cache, prot, etc.) unchanged.
+
+- **Read-address WRAP detection and conversion.** Identically for AR transactions: WRAP → INCR
+  with address adjusted.
+
+- **Write-data pass-through.** The W channel (data and last flag) passes through unchanged from
+  slave to master, routed based on the corresponding AW transaction's ID and handling.
+
+- **Response routing.** Write responses (B) from the master are routed back to the slave unchanged,
+  matched by ID. Read responses (R) from the master are routed back to the slave unchanged.
+
+- **Backpressure.** Valid/ready handshakes are preserved: if the master is not ready, the slave
+  is held. If the slave is not ready, the master is held.
+
+- **INCR and FIXED pass-through.** Transactions with `burst_type == INCR` or `burst_type == FIXED`
+  pass through unchanged; they do not require conversion.
+
+- **Atomicity.** All beats of a converted WRAP burst remain part of a single AXI transaction with
+  the same length and ID.
+
+- **Reset behavior.** On `rst_ni` assertion, state resets.
+
+## Clock and reset domains
+
+- Single clock domain: `clk_i` and `rst_ni`.
+
+## Example behavior
+
+1. **WRAP write burst.** Slave sends AW with:
+   - address = 0x100
+   - size = 3 (8 bytes per beat)
+   - length = 3 (4 beats)
+   - burst = WRAP
+   
+   WRAP boundary = 32 bytes (4 beats × 8 bytes). WRAP addresses would be: 0x100, 0x108, 0x110, 0x118.
+   
+   TopModule converts to INCR and forwards to master:
+   - address = 0x100 (starting address unchanged)
+   - burst = INCR
+   - Master will see address increments: 0x100, 0x108, 0x110, 0x118 (same sequence as WRAP due to
+     the module's internal address sequencing).
+
+2. **INCR write burst.** Slave sends AW with burst=INCR. Passes through unchanged.

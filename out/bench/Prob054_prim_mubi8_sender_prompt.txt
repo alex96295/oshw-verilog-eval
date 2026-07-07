@@ -1,0 +1,55 @@
+Design a module called TopModule. This module is a multi-bit-encoded (MuBi) Boolean sender that buffers an 8-bit redundantly-encoded True/False value for transmission or local storage in a safety-critical context.
+
+Overview
+
+TopModule implements a fault-resistant buffer for the MuBi8 encoding scheme, which represents Boolean values using complementary 8-bit patterns. MuBi8True is encoded as 8'h96 and MuBi8False as 8'h69 (bitwise complements). The module optionally includes a single register stage (asynchronous mode) and a security buffer. This is lighter-weight than a full synchronizer, intended for single-domain or high-frequency use.
+
+Parameters
+
+  Parameter   Type   Default   Meaning  
+ ----------- ------ --------- --------- 
+  AsyncOn   bit   1   If 1, includes a single registered stage to buffer the input. If 0, passthrough (combinational) with a safety buffer.  
+  EnSecBuf   bit   0   If 1, uses a security-anchor buffer (prim_sec_anchor_buf) for enhanced fault tolerance. If 0, uses standard buffer. Ignored when AsyncOn == 1.  
+  ResetValue   mubi8_t   MuBi8False   The MuBi8 value (encoded) to hold on reset.  
+
+Interface
+
+  Port   Direction   Width   Description  
+ ------ ----------- ------- ------------- 
+  clk_i   input   1   Clock.  
+  rst_ni   input   1   Active-low reset.  
+  mubi_i   input   8   Input MuBi8 value (8-bit encoded: 8'h96 for True, 8'h69 for False, others invalid).  
+  mubi_o   output   8   Output MuBi8 value.  
+
+Behavioral requirements
+
+- MuBi8 encoding. Input and output use the MuBi8 encoding: 8'h96 (binary 10010110) represents True, 8'h69 (binary 01101001) represents False. These are bitwise complements. Other values are invalid.
+- Asynchronous buffering. When AsyncOn == 1:
+  - A single synchronous register stage stores the input, updated on each clock edge.
+  - Output is combinational from the register (feedthrough connection); no additional logic.
+  - Provides isolation and pipelining.
+- Synchronous passthrough. When AsyncOn == 0:
+  - Input is directly passed through to the security buffer stage.
+  - No registered delay; output reflects input combinationally (plus buffer delay).
+  - A dummy flip-flop is held for inference but unused, to maintain port/parameter structure.
+- Security buffer. When AsyncOn == 0:
+  - If EnSecBuf == 1, a prim_sec_anchor_buf is used for enhanced fault tolerance.
+  - If EnSecBuf == 0, a standard prim_buf is used.
+  - These buffers provide impedance isolation to defend against glitches and transients.
+- Reset behavior. On rst_ni == 0, the internal register (if AsyncOn == 1) or passthrough assumes ResetValue.
+
+Timing / latency
+
+- With register (AsyncOn == 1): 1 cycle internal latency (register delay) plus buffer propagation (~1 ps to 1 ns).
+- Passthrough (AsyncOn == 0): combinational from input to output (buffer propagation delay only).
+
+Example
+
+With AsyncOn = 1, ResetValue = MuBi8False:
+
+- Cycle 0: mubi_i = 8'h96 (True), mubi_o = previous register value (initially ResetValue).
+- Cycle 1: mubi_o = 8'h96 (True; now registered).
+
+With AsyncOn = 0:
+
+- Combinational: mubi_o follows mubi_i through the buffer immediately.

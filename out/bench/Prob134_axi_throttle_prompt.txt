@@ -1,0 +1,51 @@
+Design a module called TopModule. This module is an AXI4 bandwidth throttle that limits the number of outstanding write address and read address transactions to programmable bounds.
+
+Overview
+
+TopModule is an AXI4 throttle. It accepts AXI4 transactions on a slave port and forwards them to a master port, but restricts the number of outstanding write address (AW) and read address (AR) transactions to user-defined limits. This is useful for rate-limiting traffic to a memory controller, resource allocator, or other bandwidth-sensitive endpoint. The module tracks pending AW and AR beats and gates new requests when the limits are reached.
+
+Parameters
+
+  Parameter   Meaning  
+ ----------- --------- 
+  MaxNumAwPending   Maximum number of outstanding AW transactions allowed.  
+  MaxNumArPending   Maximum number of outstanding AR transactions allowed.  
+  axi_req_t   Type of AXI4 request struct.  
+  axi_rsp_t   Type of AXI4 response struct.  
+  WCntWidth   Derived width for write-pending counter.  
+  RCntWidth   Derived width for read-pending counter.  
+  w_credit_t   Type of write credit counter.  
+  r_credit_t   Type of read credit counter.  
+
+Interface
+
+  Port   Direction   Type   Description  
+ ------ ----------- ------ ------------- 
+  clk_i   input   -   Clock.  
+  rst_ni   input   -   Active-low reset.  
+  req_i   input   axi_req_t   AXI4 request from master: AW/W/AR channels with valid signals.  
+  rsp_o   output   axi_rsp_t   AXI4 response to master: B/R channels with ready signals.  
+  mst_req_o   output   axi_req_t   AXI4 request to slave: throttled based on pending counters.  
+  mst_rsp_i   input   axi_rsp_t   AXI4 response from slave.  
+
+Behavioral requirements
+
+- Write address throttling. When req_i.aw_valid is asserted, the module checks if the current count of pending AW (granted but not yet B-responsed) is below MaxNumAwPending. If yes, the AW is forwarded and the pending count increments. If no, mst_req_o.aw_valid is held low (stalling the request).
+- Read address throttling. Similarly, when req_i.ar_valid is asserted, the module checks if the pending AR count is below MaxNumArPending. If yes, the AR is forwarded and the count increments. If no, mst_req_o.ar_valid is held low.
+- Write data pass-through. W channel is passed through without throttling (it is assumed that W is associated with a previously accepted AW).
+- Response handling. When mst_rsp_i.b_valid is asserted and req_i.b_ready is asserted, the write-pending count decrements. When mst_rsp_i.r_valid and mst_rsp_i.r_last are asserted and req_i.r_ready is asserted, the read-pending count decrements.
+- Backpressure. Ready signals are properly backpressured: if the slave is not ready or if a limit has been reached, the slave-side ready is deasserted.
+- Reset behavior. On reset, both pending counters are cleared.
+
+Throughput and latency
+
+- Latency. Zero additional latency (throttling is combinational).
+- Throughput. Limited by the bounds: in steady state, the throughput is the minimum of the master's bandwidth and the throttle rates (one AW per cycle up to the limit, one AR per cycle up to the limit).
+
+Clock and reset domains
+
+Single clock domain.
+
+Example behavior
+
+With MaxNumAwPending=2, the module can accept at most 2 AW transactions before any B response is received. The first two AWs are forwarded immediately. A third AW request from the slave is stalled (mst_req_o.aw_valid held low) until one of the pending write addresses receives its B response, decrementing the counter back to 1.

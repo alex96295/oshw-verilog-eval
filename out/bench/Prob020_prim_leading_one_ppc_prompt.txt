@@ -1,0 +1,68 @@
+Design a module called TopModule. This module is a leading-one detector and prefix population counter: it identifies the position of the leftmost (most significant) asserted bit and computes the prefix OR of an input vector.
+
+Overview
+
+TopModule implements three related combinational operations on a binary input vector:
+1. Prefix Parallel Count (PPC): A cumulative OR from bit 0 upward, showing which bits "have been seen" up to each position.
+2. Leading-One Detection: Isolation of the leftmost asserted bit as a one-hot signal.
+3. Index Computation: The zero-based position of the leading one.
+
+Parameters
+
+  Parameter   Meaning   Default  
+ ----------- --------- --------- 
+  N         Width of the input vector, in bits.   8  
+  IdxW      Width of the output index. Derived as $clog2(N) when N > 1, or 1 when N = 1. Semantically, IdxW is the smallest width needed to represent indices 0 through N-1.   Derived  
+
+Interface
+
+All ports are combinational; there is no clock or reset.
+
+  Port            Direction   Width     Description  
+ --------------- ----------- --------- ------------- 
+  in_i          input       N       Input vector. Bit 0 is the least significant; bit N-1 is the most significant.  
+  leading_one_o   output    N       One-hot encoded output indicating the position of the most significant asserted bit. If in_i is all zeros, the output is all zeros.  
+  ppc_out_o     output      N       Prefix parallel count (prefix OR). Bit i is high if any bit from 0 to i (inclusive) in in_i is asserted.  
+  idx_o         output      IdxW    Zero-based index of the leading one. If in_i is all zeros, the result is 0.  
+
+Behavioral Requirements
+
+Prefix Parallel Count (PPC):
+- ppc_out_o[i] is high if in_i[j] is high for any j in [0, i].
+- Equivalently, ppc_out_o = in_i   {in_i[N-2:0], 1'b0}   {in_i[N-3:0], 2'b0}   ...   {in_i[0], N-1 zeros}.
+- In other words, it is the cumulative OR starting from bit 0 and extending toward the most significant bit.
+
+Leading-One Isolation:
+- leading_one_o is the one-hot encoding of the most significant asserted bit.
+- leading_one_o[i] is high if and only if in_i[i] is high and no higher-indexed bit is asserted.
+- If in_i is all zeros, leading_one_o is also all zeros.
+- Mathematically, leading_one_o = ppc_out_o XOR {ppc_out_o[N-2:0], 1'b0}.
+
+Index of Leading One:
+- idx_o is the zero-based position of the leading one.
+- When leading_one_o[i] is high, idx_o = i.
+- If in_i is all zeros (no leading one), idx_o is 0 (undefined behavior; tie-breaking rule: returns 0).
+
+Examples: N = 8
+
+  in_i (binary)   ppc_out_o (binary)   leading_one_o (binary)   idx_o   Explanation  
+ ----------------- --------------------- -------------------------- --------- ------------- 
+  00010100          00010101              00010000                   4         Bits 2 and 4 set; MSB is bit 4. PPC accumulates from bit 0. Leading one at bit 4, index = 4.  
+  00000001          00000001              00000001                   0         Only bit 0 set. PPC = 1. Leading one at bit 0, index = 0.  
+  10000000          11111111              10000000                   7         Only MSB set. PPC accumulates all from bit 0 to bit 7. Leading one at bit 7, index = 7.  
+  00000000          00000000              00000000                   0         All zeros. No bits set. PPC and leading_one both zero. Index = 0 (undefined).  
+  11110000          11110000              10000000                   7         Bits 4-7 set. PPC accumulates bits 0-7 but only bits 4-7 are asserted in the input, so PPC[3:0]=0. Leading one at MSB (bit 7), index = 7.  
+  10101010          11111111              10000000                   7         Multiple bits set; MSB is bit 7. PPC accumulates and becomes all ones. Leading one at bit 7.  
+
+Latency and Throughput
+
+- The detection and counting operations are fully combinational.
+- Output updates immediately when the input changes.
+- All three outputs are derived from the input with zero latency.
+- Throughput is one result per clock cycle.
+
+Use Cases
+
+- Priority Encoding: Find the highest-priority (MSB) asserted bit.
+- Prefix Operations: Implement scan and prefix circuits in parallel.
+- Leading Zero/One Detection: Determine how many leading zeros/ones precede the first bit change.

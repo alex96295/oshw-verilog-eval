@@ -1,0 +1,82 @@
+Design a module called TopModule. This module is a synchronous FIFO (first-in, first-out) buffer that stores and retrieves data in a single clock domain.
+
+## Overview
+
+TopModule implements a synchronous FIFO queue with configurable storage capacity and optional pass-through behavior. Data written on the input side becomes available on the output side, respecting FIFO ordering. The module operates in a single clock domain and provides status signals for fullness and error detection.
+
+## Parameters
+
+| Parameter | Meaning | Default |
+|-----------|---------|---------|
+| `Width` | Width of data words, in bits. | 16 |
+| `Pass` | When asserted, read data may come directly from the current write input (pass-through) if FIFO is empty. | 1 |
+| `Depth` | Number of storage slots. | 4 |
+| `OutputZeroIfEmpty` | When asserted, read data is zeroed when the FIFO is empty. | 1 |
+| `NeverClears` | When asserted, the asynchronous clear input will never be asserted (assertion constraint). | 0 |
+| `Secure` | When asserted, enable redundancy checks to detect internal errors. | 0 |
+
+## Interface
+
+| Port | Direction | Width | Description |
+|------|-----------|-------|-------------|
+| `clk_i` | input | 1 | System clock. |
+| `rst_ni` | input | 1 | Asynchronous active-low reset. |
+| `clr_i` | input | 1 | Synchronous clear: empties all stored data on the next clock edge. |
+| `wvalid_i` | input | 1 | Write valid: asserted when `wdata_i` is valid and should be written. |
+| `wready_o` | output | 1 | Write ready: asserted when the FIFO has space for a new write. |
+| `wdata_i` | input | `Width` | Data to write (sampled when both `wvalid_i` and `wready_o` are high). |
+| `rvalid_o` | output | 1 | Read valid: asserted when `rdata_o` contains valid data. |
+| `rready_i` | input | 1 | Read ready: indicates the reader is accepting the current data. |
+| `rdata_o` | output | `Width` | Output data (valid when `rvalid_o` is high). |
+| `full_o` | output | 1 | Asserted when the FIFO is completely full (cannot accept more writes). |
+| `depth_o` | output | `DepthW` | Number of entries currently stored (where `DepthW = ceil(log2(Depth+1))`). |
+| `err_o` | output | 1 | Error flag: asserted when an internal redundancy check fails (only in Secure mode). |
+
+## Behavioral requirements
+
+### Basic Operation
+- **FIFO Discipline.** Data written via the write port enters the FIFO; data read via the read port exits the FIFO in FIFO order. A write on a cycle where both `wvalid_i` and `wready_o` are high advances the write pointer and stores the data. A read on a cycle where both `rvalid_o` and `rready_i` are high advances the read pointer.
+- **Pass-through (when `Pass = 1`).** When the FIFO is empty but new data is being written (`wvalid_i` is high), the incoming write data may appear directly on the read output without being stored, allowing combinational data flow. In this case, `rvalid_o` is asserted based on `wvalid_i`.
+- **No Pass-through (when `Pass = 0`).** Data must be stored and retrieved sequentially; new writes have no direct effect on the read side until they are stored and later read out.
+
+### Ready/Valid Handshake
+- **Write Side.** `wready_o` is asserted whenever the FIFO has space to accept a new entry. When `wready_o` is low, the FIFO is full and the writer must wait.
+- **Read Side.** `rvalid_o` is asserted whenever the FIFO has data available for reading:
+  - In pass-through mode, `rvalid_o` may reflect incoming write data (`wvalid_i`) even when storage is empty.
+  - In non-pass-through mode, `rvalid_o` reflects actual stored data.
+- **Output Masking.** When `OutputZeroIfEmpty = 1` and the FIFO is empty, `rdata_o` is forced to all zeros (even if not valid). When `OutputZeroIfEmpty = 0`, `rdata_o` holds the last read value or incoming pass-through data.
+
+### Depth and Fullness
+- **Depth Signal.** The `depth_o` output indicates the number of entries currently in the FIFO, in the range [0, Depth].
+- **Full Flag.** `full_o` is asserted when `depth_o == Depth`.
+
+### Reset and Clear
+- **Asynchronous Reset.** On `rst_ni` assertion (active low), the FIFO is reset to an empty state. The module enters an initialization phase for one cycle to avoid glitches.
+- **Synchronous Clear.** When `clr_i` is asserted on a clock edge, the FIFO is emptied on the next clock edge.
+- **Initialize Delay.** After reset is released, there is a one-cycle delay before the FIFO is ready to accept reads (`rvalid_o` remains low).
+
+### Error Detection (Secure Mode)
+- When `Secure = 1`, internal redundancy checks are enabled. If a mismatch is detected between the primary and duplicate state, `err_o` is asserted (latched). This provides basic error detection against bit flips.
+- When `Secure = 0`, `err_o` remains low.
+
+### Special Cases
+- **Depth = 0 (Pass-through only).** The module operates as a pure combinational pass-through: data flows directly from write to read with no storage. `Pass` must be 1 in this configuration.
+- **Depth = 1 (Singleton).** A single-entry FIFO operates as a one-slot buffer. Pass-through mode allows the incoming write to flow to the read output when the singleton is empty.
+
+## Timing and Latency
+
+- **Write Latency.** A write accepted on cycle N is stored and available for read on the same cycle or later, depending on the FIFO fill level and read activity.
+- **Pass-through Latency.** In pass-through mode, incoming data appears on the read output with zero latency (combinational), provided the FIFO is empty and the reader is ready.
+- **Read Latency.** Asserted `rvalid_o` and available `rdata_o` are combinational functions of the internal FIFO state.
+
+## Example
+
+With `Width = 8`, `Depth = 4`, `Pass = 1`:
+
+| Cycle | `wvalid_i` | `wdata_i` | `wready_o` | `rvalid_o` | `rdata_o` | `rready_i` | `depth_o` | Notes |
+|-------|-----------|----------|-----------|-----------|----------|-----------|----------|-------|
+| 0 | 0 | — | 1 | 0 | 0x00 | 0 | 0 | FIFO empty after reset |
+| 1 | 1 | 0xAA | 1 | 1 | 0xAA | 0 | 0 | Pass-through: write data flows to read in same cycle |
+| 2 | 1 | 0xBB | 1 | 1 | 0xBB | 0 | 1 | 0xAA stored; 0xBB flowing through |
+| 3 | 1 | 0xCC | 1 | 1 | 0xCC | 1 | 2 | 0xAA exits, 0xBB and 0xCC stored, 0xCC flowing through, reader accepts |
+| 4 | 0 | — | 1 | 1 | 0xBB | 0 | 1 | 0xBB is now the oldest entry in storage |

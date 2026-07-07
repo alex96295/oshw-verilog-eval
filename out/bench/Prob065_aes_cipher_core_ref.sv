@@ -1,0 +1,9940 @@
+
+`ifndef PRIM_ASSERT_SV
+`define PRIM_ASSERT_SV
+`define ASSERT_DEFAULT_CLK clk_i
+`define ASSERT_DEFAULT_RST !rst_ni
+`define PRIM_STRINGIFY(__x) `"__x`"
+`define ASSERT_ERROR(__name)                                                             \
+`ifdef UVM                                                                               \
+  uvm_pkg::uvm_report_error("ASSERT FAILED", `PRIM_STRINGIFY(__name), uvm_pkg::UVM_NONE, \
+                            `__FILE__, `__LINE__, "", 1);                                \
+`else                                                                                    \
+  $error("%0t: (%0s:%0d) [%m] [ASSERT FAILED] %0s", $time, `__FILE__, `__LINE__,         \
+         `PRIM_STRINGIFY(__name));                                                       \
+`endif
+`define ASSERT_STATIC_LINT_ERROR(__name, __prop)     \
+  localparam int __name = (__prop) ? 1 : 2;          \
+  always_comb begin                                  \
+    logic unused_assert_static_lint_error;           \
+    unused_assert_static_lint_error = __name'(1'b1); \
+  end
+`define ASSERT_STATIC_IN_PACKAGE(__name, __prop)              \
+  function automatic bit assert_static_in_package_``__name(); \
+    bit unused_bit [((__prop) ? 1 : -1)];                     \
+    unused_bit = '{default: 1'b0};                            \
+    return unused_bit[0];                                     \
+  endfunction
+`ifdef VERILATOR
+ `include "prim_assert_dummy_macros.svh"`elsif SYNTHESIS
+ `include "prim_assert_dummy_macros.svh"`elsif YOSYS
+ `include "prim_assert_yosys_macros.svh"
+ `define INC_ASSERT`else
+ 
+`define ASSERT_I(__name, __prop) \
+  __name: assert (__prop)        \
+    else begin                   \
+      `ASSERT_ERROR(__name)      \
+    end
+`define ASSERT_INIT(__name, __prop)                                                  \
+`ifdef FPV_ON                                                                        \
+  if (!(__prop)) $fatal(2, "Fatal static assertion [%s]: (%s) is not true.",         \
+                        (__name), (__prop));                                         \
+`else                                                                                \
+  initial begin                                                                      \
+    __name: assert (__prop)                                                          \
+      else begin                                                                     \
+        `ASSERT_ERROR(__name)                                                        \
+      end                                                                            \
+  end                                                                                \
+`endif
+`define ASSERT_INIT_NET(__name, __prop)                                                   \
+  initial begin                                                                      \
+    
+    
+    
+    #1ps;                                                                            \
+    __name: assert (__prop)                                                          \
+      else begin                                                                     \
+        `ASSERT_ERROR(__name)                                                        \
+      end                                                                            \
+  end                                                                                \
+`define ASSERT_FINAL(__name, __prop)                                         \
+`ifndef FPV_ON                                                               \
+  final begin                                                                \
+    __name: assert (__prop || $test$plusargs("disable_assert_final_checks")) \
+      else begin                                                             \
+        `ASSERT_ERROR(__name)                                                \
+      end                                                                    \
+  end                                                                        \
+`endif
+`define ASSERT_AT_RESET(__name, __prop, __rst = `ASSERT_DEFAULT_RST)          \
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+`ifndef FPV_ON                                                                \
+  __name: assert property (@(posedge __rst) $isunknown(__rst) || (__prop))    \
+`else                                                                         \
+  __name: assert property (@(posedge __rst) (__prop))                         \
+`endif                                                                        \
+    else begin                                                                \
+      `ASSERT_ERROR(__name)                                                   \
+    end
+`define ASSERT_AT_RESET_AND_FINAL(__name, __prop, __rst = `ASSERT_DEFAULT_RST) \
+    `ASSERT_AT_RESET(AtReset_``__name``, __prop, __rst)                        \
+    `ASSERT_FINAL(Final_``__name``, __prop)
+`define ASSERT(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: assert property (@(posedge __clk) disable iff ((__rst) !== '0) (__prop))       \
+    else begin                                                                           \
+      `ASSERT_ERROR(__name)                                                              \
+    end
+`define ASSERT_NEVER(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: assert property (@(posedge __clk) disable iff ((__rst) !== '0) not (__prop))         \
+    else begin                                                                                 \
+      `ASSERT_ERROR(__name)                                                                    \
+    end
+`define ASSERT_KNOWN(__name, __sig, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifndef FPV_ON                                                                                \
+  `ASSERT(__name, !$isunknown(__sig), __clk, __rst)                                           \
+`endif
+`define COVER(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: cover property (@(posedge __clk) disable iff ((__rst) !== '0) (__prop));
+`define ASSUME(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: assume property (@(posedge __clk) disable iff ((__rst) !== '0) (__prop))       \
+    else begin                                                                           \
+      `ASSERT_ERROR(__name)                                                              \
+    end
+`define ASSUME_I(__name, __prop) \
+  __name: assume (__prop)        \
+    else begin                   \
+      `ASSERT_ERROR(__name)      \
+    end
+ `define INC_ASSERT
+`endif
+`define ASSERT_PULSE(__name, __sig, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  `ASSERT(__name, $rose(__sig) |=> !(__sig), __clk, __rst)
+`define ASSERT_IF(__name, __prop, __enable, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  `ASSERT(__name, (__enable) |-> (__prop), __clk, __rst)
+`define ASSERT_KNOWN_IF(__name, __sig, __enable, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifndef FPV_ON                                                                                             \
+  `ASSERT_KNOWN(__name``KnownEnable, __enable, __clk, __rst)                                               \
+  `ASSERT_IF(__name, !$isunknown(__sig), __enable, __clk, __rst)                                           \
+`endif
+`define ASSUME_FPV(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifdef FPV_ON                                                                                \
+   `ASSUME(__name, __prop, __clk, __rst)                                                     \
+`endif
+`define ASSUME_I_FPV(__name, __prop) \
+`ifdef FPV_ON                        \
+   `ASSUME_I(__name, __prop)         \
+`endif
+`define COVER_FPV(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifdef FPV_ON                                                                               \
+   `COVER(__name, __prop, __clk, __rst)                                                     \
+`endif
+`define ASSERT_FPV_LINEAR_FSM(__name, __state, __type, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  `ifdef INC_ASSERT                                                                                              \
+     bit __name``_cond;                                                                                          \
+     always_ff @(posedge __clk or posedge __rst) begin                                                           \
+       if (__rst) begin                                                                                          \
+         __name``_cond <= 0;                                                                                     \
+       end else begin                                                                                            \
+         __name``_cond <= 1;                                                                                     \
+       end                                                                                                       \
+     end                                                                                                         \
+     property __name``_p;                                                                                        \
+       __type initial_state;                                                                                     \
+       (!$stable(__state) & __name``_cond, initial_state = $past(__state)) |->                                   \
+           (__state != initial_state) until !(__name``_cond);                                                    \
+     endproperty                                                                                                 \
+   `ASSERT(__name, __name``_p, __clk, 0)                                                                         \
+  `endif
+`ifndef PRIM_ASSERT_SEC_CM_SVH
+`define PRIM_ASSERT_SEC_CM_SVH
+`define _SEC_CM_ALERT_MAX_CYC 30
+`define ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, ERR_NAME_, CLK_, RST_) \
+  `ASSERT(FpvSecCm``NAME_``,                                                                    \
+          $rose(HIER_.ERR_NAME_) && !(GATE_) |-> ##[0:MAX_CYCLES_] (ERR_),                      \
+          CLK_, RST_)                                                                           \
+  `ifdef INC_ASSERT                                                                             \
+    assign HIER_.unused_assert_connected = 1'b1;                                                \
+  `endif
+`define ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, ERR_NAME_)    \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, (ALERT_.alert_p), GATE_, MAX_CYCLES_, ERR_NAME_, \
+                            `ASSERT_DEFAULT_CLK, `ASSERT_DEFAULT_RST)                      \
+  `ASSUME_FPV(``NAME_``TriggerAfterAlertInit_S,                                            \
+              $stable(rst_ni) == 0 |-> HIER_.ERR_NAME_ == 0 [*10])
+`define ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_IN_, GATE_, MAX_CYCLES_, ERR_NAME_) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ALERT_IN_, GATE_, MAX_CYCLES_, ERR_NAME_,           \
+                            `ASSERT_DEFAULT_CLK, `ASSERT_DEFAULT_RST)
+`define ASSERT_PRIM_COUNT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_DOUBLE_LFSR_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_FSM_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, unused_err_o)
+`define ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_REG_WE_ONEHOT_ERROR_TRIGGER_ALERT(NAME_, REG_TOP_HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT(NAME_, \
+    REG_TOP_HIER_.u_prim_reg_we_check.u_prim_onehot_check, ALERT_, GATE_, MAX_CYCLES_)
+`define ASSERT_PRIM_FIFO_SYNC_SINGLETON_ERROR_TRIGGER_ALERT(NAME, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_COUNT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_DOUBLE_LFSR_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_FSM_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, unused_err_o)
+`define ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_REG_WE_ONEHOT_ERROR_TRIGGER_ALERT_IN(NAME_, REG_TOP_HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT_IN(NAME_, \
+    REG_TOP_HIER_.u_prim_reg_we_check.u_prim_onehot_check, ALERT_, GATE_, MAX_CYCLES_)
+`define ASSERT_PRIM_FIFO_SYNC_SINGLETON_ERROR_TRIGGER_ALERT_IN(NAME, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_FSM_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = 2, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, unused_err_o, CLK_, RST_)
+`define ASSERT_PRIM_COUNT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = 2, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, err_o, CLK_, RST_)
+`define ASSERT_PRIM_DOUBLE_LFSR_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = 2, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, err_o, CLK_, RST_)
+`define ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, err_o, CLK_, RST_)
+`define ASSERT_PRIM_REG_WE_ONEHOT_ERROR_TRIGGER_ERR(NAME_, REG_TOP_HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ERR(NAME_, \
+    REG_TOP_HIER_.u_prim_reg_we_check.u_prim_onehot_check, ERR_, GATE_, MAX_CYCLES_, CLK_, RST_)
+`endif 
+`ifndef PRIM_FLOP_MACROS_SV
+`define PRIM_FLOP_MACROS_SV
+`define PRIM_FLOP_CLK clk_i
+`define PRIM_FLOP_RST rst_ni
+`define PRIM_FLOP_RESVAL '0
+`define PRIM_FLOP_A(__d, __q, __resval = `PRIM_FLOP_RESVAL, __clk = `PRIM_FLOP_CLK, __rst_n = `PRIM_FLOP_RST) \
+  always_ff @(posedge __clk or negedge __rst_n) begin \
+    if (!__rst_n) begin                               \
+      __q <= __resval;                                \
+    end else begin                                    \
+      __q <= __d;                                     \
+    end                                               \
+  end
+`define PRIM_FLOP_SPARSE_FSM(__name, __d, __q, __type, __resval = `PRIM_FLOP_RESVAL, __clk = `PRIM_FLOP_CLK, __rst_n = `PRIM_FLOP_RST, __alert_trigger_sva_en = 1) \
+  `ifdef SIMULATION                                   \
+    prim_sparse_fsm_flop #(                           \
+      .StateEnumT(__type),                            \
+      .Width($bits(__type)),                          \
+      .ResetValue($bits(__type)'(__resval)),          \
+      .EnableAlertTriggerSVA(__alert_trigger_sva_en), \
+      .CustomForceName(`PRIM_STRINGIFY(__q))          \
+    ) __name (                                        \
+      .clk_i   ( __clk   ),                           \
+      .rst_ni  ( __rst_n ),                           \
+      .state_i ( __d     ),                           \
+      .state_o (         )                            \
+    );                                                \
+    `PRIM_FLOP_A(__d, __q, __resval, __clk, __rst_n)  \
+    `ASSERT(``__name``_A, __q === ``__name``.state_o) \
+  `else                                               \
+    prim_sparse_fsm_flop #(                           \
+      .StateEnumT(__type),                            \
+      .Width($bits(__type)),                          \
+      .ResetValue($bits(__type)'(__resval)),          \
+      .EnableAlertTriggerSVA(__alert_trigger_sva_en)  \
+    ) __name (                                        \
+      .clk_i   ( __clk   ),                           \
+      .rst_ni  ( __rst_n ),                           \
+      .state_i ( __d     ),                           \
+      .state_o ( __q     )                            \
+    );                                                \
+  `endif
+`endif 
+`endif 
+module prim_sec_anchor_buf #(
+  parameter int Width = 1
+) (
+  input        [Width-1:0] in_i,
+  output logic [Width-1:0] out_o
+);
+  prim_buf #(
+    .Width(Width)
+  ) u_secure_anchor_buf (
+    .in_i,
+    .out_o
+  );
+endmodule
+
+`ifndef PRIM_ASSERT_SV
+`define PRIM_ASSERT_SV
+`define ASSERT_DEFAULT_CLK clk_i
+`define ASSERT_DEFAULT_RST !rst_ni
+`define PRIM_STRINGIFY(__x) `"__x`"
+`define ASSERT_ERROR(__name)                                                             \
+`ifdef UVM                                                                               \
+  uvm_pkg::uvm_report_error("ASSERT FAILED", `PRIM_STRINGIFY(__name), uvm_pkg::UVM_NONE, \
+                            `__FILE__, `__LINE__, "", 1);                                \
+`else                                                                                    \
+  $error("%0t: (%0s:%0d) [%m] [ASSERT FAILED] %0s", $time, `__FILE__, `__LINE__,         \
+         `PRIM_STRINGIFY(__name));                                                       \
+`endif
+`define ASSERT_STATIC_LINT_ERROR(__name, __prop)     \
+  localparam int __name = (__prop) ? 1 : 2;          \
+  always_comb begin                                  \
+    logic unused_assert_static_lint_error;           \
+    unused_assert_static_lint_error = __name'(1'b1); \
+  end
+`define ASSERT_STATIC_IN_PACKAGE(__name, __prop)              \
+  function automatic bit assert_static_in_package_``__name(); \
+    bit unused_bit [((__prop) ? 1 : -1)];                     \
+    unused_bit = '{default: 1'b0};                            \
+    return unused_bit[0];                                     \
+  endfunction
+`ifdef VERILATOR
+ `include "prim_assert_dummy_macros.svh"`elsif SYNTHESIS
+ `include "prim_assert_dummy_macros.svh"`elsif YOSYS
+ `include "prim_assert_yosys_macros.svh"
+ `define INC_ASSERT`else
+ 
+`define ASSERT_I(__name, __prop) \
+  __name: assert (__prop)        \
+    else begin                   \
+      `ASSERT_ERROR(__name)      \
+    end
+`define ASSERT_INIT(__name, __prop)                                                  \
+`ifdef FPV_ON                                                                        \
+  if (!(__prop)) $fatal(2, "Fatal static assertion [%s]: (%s) is not true.",         \
+                        (__name), (__prop));                                         \
+`else                                                                                \
+  initial begin                                                                      \
+    __name: assert (__prop)                                                          \
+      else begin                                                                     \
+        `ASSERT_ERROR(__name)                                                        \
+      end                                                                            \
+  end                                                                                \
+`endif
+`define ASSERT_INIT_NET(__name, __prop)                                                   \
+  initial begin                                                                      \
+    
+    
+    
+    #1ps;                                                                            \
+    __name: assert (__prop)                                                          \
+      else begin                                                                     \
+        `ASSERT_ERROR(__name)                                                        \
+      end                                                                            \
+  end                                                                                \
+`define ASSERT_FINAL(__name, __prop)                                         \
+`ifndef FPV_ON                                                               \
+  final begin                                                                \
+    __name: assert (__prop || $test$plusargs("disable_assert_final_checks")) \
+      else begin                                                             \
+        `ASSERT_ERROR(__name)                                                \
+      end                                                                    \
+  end                                                                        \
+`endif
+`define ASSERT_AT_RESET(__name, __prop, __rst = `ASSERT_DEFAULT_RST)          \
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+`ifndef FPV_ON                                                                \
+  __name: assert property (@(posedge __rst) $isunknown(__rst) || (__prop))    \
+`else                                                                         \
+  __name: assert property (@(posedge __rst) (__prop))                         \
+`endif                                                                        \
+    else begin                                                                \
+      `ASSERT_ERROR(__name)                                                   \
+    end
+`define ASSERT_AT_RESET_AND_FINAL(__name, __prop, __rst = `ASSERT_DEFAULT_RST) \
+    `ASSERT_AT_RESET(AtReset_``__name``, __prop, __rst)                        \
+    `ASSERT_FINAL(Final_``__name``, __prop)
+`define ASSERT(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: assert property (@(posedge __clk) disable iff ((__rst) !== '0) (__prop))       \
+    else begin                                                                           \
+      `ASSERT_ERROR(__name)                                                              \
+    end
+`define ASSERT_NEVER(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: assert property (@(posedge __clk) disable iff ((__rst) !== '0) not (__prop))         \
+    else begin                                                                                 \
+      `ASSERT_ERROR(__name)                                                                    \
+    end
+`define ASSERT_KNOWN(__name, __sig, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifndef FPV_ON                                                                                \
+  `ASSERT(__name, !$isunknown(__sig), __clk, __rst)                                           \
+`endif
+`define COVER(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: cover property (@(posedge __clk) disable iff ((__rst) !== '0) (__prop));
+`define ASSUME(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: assume property (@(posedge __clk) disable iff ((__rst) !== '0) (__prop))       \
+    else begin                                                                           \
+      `ASSERT_ERROR(__name)                                                              \
+    end
+`define ASSUME_I(__name, __prop) \
+  __name: assume (__prop)        \
+    else begin                   \
+      `ASSERT_ERROR(__name)      \
+    end
+ `define INC_ASSERT
+`endif
+`define ASSERT_PULSE(__name, __sig, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  `ASSERT(__name, $rose(__sig) |=> !(__sig), __clk, __rst)
+`define ASSERT_IF(__name, __prop, __enable, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  `ASSERT(__name, (__enable) |-> (__prop), __clk, __rst)
+`define ASSERT_KNOWN_IF(__name, __sig, __enable, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifndef FPV_ON                                                                                             \
+  `ASSERT_KNOWN(__name``KnownEnable, __enable, __clk, __rst)                                               \
+  `ASSERT_IF(__name, !$isunknown(__sig), __enable, __clk, __rst)                                           \
+`endif
+`define ASSUME_FPV(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifdef FPV_ON                                                                                \
+   `ASSUME(__name, __prop, __clk, __rst)                                                     \
+`endif
+`define ASSUME_I_FPV(__name, __prop) \
+`ifdef FPV_ON                        \
+   `ASSUME_I(__name, __prop)         \
+`endif
+`define COVER_FPV(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifdef FPV_ON                                                                               \
+   `COVER(__name, __prop, __clk, __rst)                                                     \
+`endif
+`define ASSERT_FPV_LINEAR_FSM(__name, __state, __type, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  `ifdef INC_ASSERT                                                                                              \
+     bit __name``_cond;                                                                                          \
+     always_ff @(posedge __clk or posedge __rst) begin                                                           \
+       if (__rst) begin                                                                                          \
+         __name``_cond <= 0;                                                                                     \
+       end else begin                                                                                            \
+         __name``_cond <= 1;                                                                                     \
+       end                                                                                                       \
+     end                                                                                                         \
+     property __name``_p;                                                                                        \
+       __type initial_state;                                                                                     \
+       (!$stable(__state) & __name``_cond, initial_state = $past(__state)) |->                                   \
+           (__state != initial_state) until !(__name``_cond);                                                    \
+     endproperty                                                                                                 \
+   `ASSERT(__name, __name``_p, __clk, 0)                                                                         \
+  `endif
+`ifndef PRIM_ASSERT_SEC_CM_SVH
+`define PRIM_ASSERT_SEC_CM_SVH
+`define _SEC_CM_ALERT_MAX_CYC 30
+`define ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, ERR_NAME_, CLK_, RST_) \
+  `ASSERT(FpvSecCm``NAME_``,                                                                    \
+          $rose(HIER_.ERR_NAME_) && !(GATE_) |-> ##[0:MAX_CYCLES_] (ERR_),                      \
+          CLK_, RST_)                                                                           \
+  `ifdef INC_ASSERT                                                                             \
+    assign HIER_.unused_assert_connected = 1'b1;                                                \
+  `endif
+`define ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, ERR_NAME_)    \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, (ALERT_.alert_p), GATE_, MAX_CYCLES_, ERR_NAME_, \
+                            `ASSERT_DEFAULT_CLK, `ASSERT_DEFAULT_RST)                      \
+  `ASSUME_FPV(``NAME_``TriggerAfterAlertInit_S,                                            \
+              $stable(rst_ni) == 0 |-> HIER_.ERR_NAME_ == 0 [*10])
+`define ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_IN_, GATE_, MAX_CYCLES_, ERR_NAME_) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ALERT_IN_, GATE_, MAX_CYCLES_, ERR_NAME_,           \
+                            `ASSERT_DEFAULT_CLK, `ASSERT_DEFAULT_RST)
+`define ASSERT_PRIM_COUNT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_DOUBLE_LFSR_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_FSM_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, unused_err_o)
+`define ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_REG_WE_ONEHOT_ERROR_TRIGGER_ALERT(NAME_, REG_TOP_HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT(NAME_, \
+    REG_TOP_HIER_.u_prim_reg_we_check.u_prim_onehot_check, ALERT_, GATE_, MAX_CYCLES_)
+`define ASSERT_PRIM_FIFO_SYNC_SINGLETON_ERROR_TRIGGER_ALERT(NAME, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_COUNT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_DOUBLE_LFSR_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_FSM_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, unused_err_o)
+`define ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_REG_WE_ONEHOT_ERROR_TRIGGER_ALERT_IN(NAME_, REG_TOP_HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT_IN(NAME_, \
+    REG_TOP_HIER_.u_prim_reg_we_check.u_prim_onehot_check, ALERT_, GATE_, MAX_CYCLES_)
+`define ASSERT_PRIM_FIFO_SYNC_SINGLETON_ERROR_TRIGGER_ALERT_IN(NAME, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_FSM_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = 2, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, unused_err_o, CLK_, RST_)
+`define ASSERT_PRIM_COUNT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = 2, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, err_o, CLK_, RST_)
+`define ASSERT_PRIM_DOUBLE_LFSR_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = 2, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, err_o, CLK_, RST_)
+`define ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, err_o, CLK_, RST_)
+`define ASSERT_PRIM_REG_WE_ONEHOT_ERROR_TRIGGER_ERR(NAME_, REG_TOP_HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ERR(NAME_, \
+    REG_TOP_HIER_.u_prim_reg_we_check.u_prim_onehot_check, ERR_, GATE_, MAX_CYCLES_, CLK_, RST_)
+`endif 
+`ifndef PRIM_FLOP_MACROS_SV
+`define PRIM_FLOP_MACROS_SV
+`define PRIM_FLOP_CLK clk_i
+`define PRIM_FLOP_RST rst_ni
+`define PRIM_FLOP_RESVAL '0
+`define PRIM_FLOP_A(__d, __q, __resval = `PRIM_FLOP_RESVAL, __clk = `PRIM_FLOP_CLK, __rst_n = `PRIM_FLOP_RST) \
+  always_ff @(posedge __clk or negedge __rst_n) begin \
+    if (!__rst_n) begin                               \
+      __q <= __resval;                                \
+    end else begin                                    \
+      __q <= __d;                                     \
+    end                                               \
+  end
+`define PRIM_FLOP_SPARSE_FSM(__name, __d, __q, __type, __resval = `PRIM_FLOP_RESVAL, __clk = `PRIM_FLOP_CLK, __rst_n = `PRIM_FLOP_RST, __alert_trigger_sva_en = 1) \
+  `ifdef SIMULATION                                   \
+    prim_sparse_fsm_flop #(                           \
+      .StateEnumT(__type),                            \
+      .Width($bits(__type)),                          \
+      .ResetValue($bits(__type)'(__resval)),          \
+      .EnableAlertTriggerSVA(__alert_trigger_sva_en), \
+      .CustomForceName(`PRIM_STRINGIFY(__q))          \
+    ) __name (                                        \
+      .clk_i   ( __clk   ),                           \
+      .rst_ni  ( __rst_n ),                           \
+      .state_i ( __d     ),                           \
+      .state_o (         )                            \
+    );                                                \
+    `PRIM_FLOP_A(__d, __q, __resval, __clk, __rst_n)  \
+    `ASSERT(``__name``_A, __q === ``__name``.state_o) \
+  `else                                               \
+    prim_sparse_fsm_flop #(                           \
+      .StateEnumT(__type),                            \
+      .Width($bits(__type)),                          \
+      .ResetValue($bits(__type)'(__resval)),          \
+      .EnableAlertTriggerSVA(__alert_trigger_sva_en)  \
+    ) __name (                                        \
+      .clk_i   ( __clk   ),                           \
+      .rst_ni  ( __rst_n ),                           \
+      .state_i ( __d     ),                           \
+      .state_o ( __q     )                            \
+    );                                                \
+  `endif
+`endif 
+`endif 
+module prim_sparse_fsm_flop #(
+  parameter int               Width      = 1,
+  parameter type              StateEnumT = logic [Width-1:0],
+  parameter logic [Width-1:0] ResetValue = '0,
+  
+  
+  parameter bit               EnableAlertTriggerSVA = 1
+`ifdef SIMULATION
+  ,
+  
+  
+  
+  parameter string            CustomForceName = ""`endif
+) (
+  input             clk_i,
+  input             rst_ni,
+  input  StateEnumT state_i,
+  output StateEnumT state_o
+);
+  logic unused_err_o;
+  logic [Width-1:0] state_raw;
+  prim_flop #(
+    .Width(Width),
+    .ResetValue(ResetValue)
+  ) u_state_flop (
+    .clk_i,
+    .rst_ni,
+    .d_i(state_i),
+    .q_o(state_raw)
+  );
+  assign state_o = StateEnumT'(state_raw);
+  `ifdef INC_ASSERT
+  assign unused_err_o = is_undefined_state(state_o);
+  function automatic logic is_undefined_state(StateEnumT sig);
+    
+    logic is_defined = 1'b0;
+    for (int i = 0, StateEnumT t = t.first(); i < t.num(); i += 1, t = t.next()) begin
+      is_defined |= (sig === t);
+    end
+    return ~is_defined;
+  endfunction
+  `else
+    assign unused_err_o = 1'b0;`endif
+  
+  
+  
+  `ifdef INC_ASSERT
+  logic unused_assert_connected;
+  `ASSERT_INIT_NET(AssertConnected_A, unused_assert_connected === 1'b1 || !EnableAlertTriggerSVA)
+  `endif
+endmodule
+
+`ifndef PRIM_ASSERT_SV
+`define PRIM_ASSERT_SV
+`define ASSERT_DEFAULT_CLK clk_i
+`define ASSERT_DEFAULT_RST !rst_ni
+`define PRIM_STRINGIFY(__x) `"__x`"
+`define ASSERT_ERROR(__name)                                                             \
+`ifdef UVM                                                                               \
+  uvm_pkg::uvm_report_error("ASSERT FAILED", `PRIM_STRINGIFY(__name), uvm_pkg::UVM_NONE, \
+                            `__FILE__, `__LINE__, "", 1);                                \
+`else                                                                                    \
+  $error("%0t: (%0s:%0d) [%m] [ASSERT FAILED] %0s", $time, `__FILE__, `__LINE__,         \
+         `PRIM_STRINGIFY(__name));                                                       \
+`endif
+`define ASSERT_STATIC_LINT_ERROR(__name, __prop)     \
+  localparam int __name = (__prop) ? 1 : 2;          \
+  always_comb begin                                  \
+    logic unused_assert_static_lint_error;           \
+    unused_assert_static_lint_error = __name'(1'b1); \
+  end
+`define ASSERT_STATIC_IN_PACKAGE(__name, __prop)              \
+  function automatic bit assert_static_in_package_``__name(); \
+    bit unused_bit [((__prop) ? 1 : -1)];                     \
+    unused_bit = '{default: 1'b0};                            \
+    return unused_bit[0];                                     \
+  endfunction
+`ifdef VERILATOR
+ `include "prim_assert_dummy_macros.svh"`elsif SYNTHESIS
+ `include "prim_assert_dummy_macros.svh"`elsif YOSYS
+ `include "prim_assert_yosys_macros.svh"
+ `define INC_ASSERT`else
+ 
+`define ASSERT_I(__name, __prop) \
+  __name: assert (__prop)        \
+    else begin                   \
+      `ASSERT_ERROR(__name)      \
+    end
+`define ASSERT_INIT(__name, __prop)                                                  \
+`ifdef FPV_ON                                                                        \
+  if (!(__prop)) $fatal(2, "Fatal static assertion [%s]: (%s) is not true.",         \
+                        (__name), (__prop));                                         \
+`else                                                                                \
+  initial begin                                                                      \
+    __name: assert (__prop)                                                          \
+      else begin                                                                     \
+        `ASSERT_ERROR(__name)                                                        \
+      end                                                                            \
+  end                                                                                \
+`endif
+`define ASSERT_INIT_NET(__name, __prop)                                                   \
+  initial begin                                                                      \
+    
+    
+    
+    #1ps;                                                                            \
+    __name: assert (__prop)                                                          \
+      else begin                                                                     \
+        `ASSERT_ERROR(__name)                                                        \
+      end                                                                            \
+  end                                                                                \
+`define ASSERT_FINAL(__name, __prop)                                         \
+`ifndef FPV_ON                                                               \
+  final begin                                                                \
+    __name: assert (__prop || $test$plusargs("disable_assert_final_checks")) \
+      else begin                                                             \
+        `ASSERT_ERROR(__name)                                                \
+      end                                                                    \
+  end                                                                        \
+`endif
+`define ASSERT_AT_RESET(__name, __prop, __rst = `ASSERT_DEFAULT_RST)          \
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+`ifndef FPV_ON                                                                \
+  __name: assert property (@(posedge __rst) $isunknown(__rst) || (__prop))    \
+`else                                                                         \
+  __name: assert property (@(posedge __rst) (__prop))                         \
+`endif                                                                        \
+    else begin                                                                \
+      `ASSERT_ERROR(__name)                                                   \
+    end
+`define ASSERT_AT_RESET_AND_FINAL(__name, __prop, __rst = `ASSERT_DEFAULT_RST) \
+    `ASSERT_AT_RESET(AtReset_``__name``, __prop, __rst)                        \
+    `ASSERT_FINAL(Final_``__name``, __prop)
+`define ASSERT(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: assert property (@(posedge __clk) disable iff ((__rst) !== '0) (__prop))       \
+    else begin                                                                           \
+      `ASSERT_ERROR(__name)                                                              \
+    end
+`define ASSERT_NEVER(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: assert property (@(posedge __clk) disable iff ((__rst) !== '0) not (__prop))         \
+    else begin                                                                                 \
+      `ASSERT_ERROR(__name)                                                                    \
+    end
+`define ASSERT_KNOWN(__name, __sig, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifndef FPV_ON                                                                                \
+  `ASSERT(__name, !$isunknown(__sig), __clk, __rst)                                           \
+`endif
+`define COVER(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: cover property (@(posedge __clk) disable iff ((__rst) !== '0) (__prop));
+`define ASSUME(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: assume property (@(posedge __clk) disable iff ((__rst) !== '0) (__prop))       \
+    else begin                                                                           \
+      `ASSERT_ERROR(__name)                                                              \
+    end
+`define ASSUME_I(__name, __prop) \
+  __name: assume (__prop)        \
+    else begin                   \
+      `ASSERT_ERROR(__name)      \
+    end
+ `define INC_ASSERT
+`endif
+`define ASSERT_PULSE(__name, __sig, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  `ASSERT(__name, $rose(__sig) |=> !(__sig), __clk, __rst)
+`define ASSERT_IF(__name, __prop, __enable, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  `ASSERT(__name, (__enable) |-> (__prop), __clk, __rst)
+`define ASSERT_KNOWN_IF(__name, __sig, __enable, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifndef FPV_ON                                                                                             \
+  `ASSERT_KNOWN(__name``KnownEnable, __enable, __clk, __rst)                                               \
+  `ASSERT_IF(__name, !$isunknown(__sig), __enable, __clk, __rst)                                           \
+`endif
+`define ASSUME_FPV(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifdef FPV_ON                                                                                \
+   `ASSUME(__name, __prop, __clk, __rst)                                                     \
+`endif
+`define ASSUME_I_FPV(__name, __prop) \
+`ifdef FPV_ON                        \
+   `ASSUME_I(__name, __prop)         \
+`endif
+`define COVER_FPV(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifdef FPV_ON                                                                               \
+   `COVER(__name, __prop, __clk, __rst)                                                     \
+`endif
+`define ASSERT_FPV_LINEAR_FSM(__name, __state, __type, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  `ifdef INC_ASSERT                                                                                              \
+     bit __name``_cond;                                                                                          \
+     always_ff @(posedge __clk or posedge __rst) begin                                                           \
+       if (__rst) begin                                                                                          \
+         __name``_cond <= 0;                                                                                     \
+       end else begin                                                                                            \
+         __name``_cond <= 1;                                                                                     \
+       end                                                                                                       \
+     end                                                                                                         \
+     property __name``_p;                                                                                        \
+       __type initial_state;                                                                                     \
+       (!$stable(__state) & __name``_cond, initial_state = $past(__state)) |->                                   \
+           (__state != initial_state) until !(__name``_cond);                                                    \
+     endproperty                                                                                                 \
+   `ASSERT(__name, __name``_p, __clk, 0)                                                                         \
+  `endif
+`ifndef PRIM_ASSERT_SEC_CM_SVH
+`define PRIM_ASSERT_SEC_CM_SVH
+`define _SEC_CM_ALERT_MAX_CYC 30
+`define ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, ERR_NAME_, CLK_, RST_) \
+  `ASSERT(FpvSecCm``NAME_``,                                                                    \
+          $rose(HIER_.ERR_NAME_) && !(GATE_) |-> ##[0:MAX_CYCLES_] (ERR_),                      \
+          CLK_, RST_)                                                                           \
+  `ifdef INC_ASSERT                                                                             \
+    assign HIER_.unused_assert_connected = 1'b1;                                                \
+  `endif
+`define ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, ERR_NAME_)    \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, (ALERT_.alert_p), GATE_, MAX_CYCLES_, ERR_NAME_, \
+                            `ASSERT_DEFAULT_CLK, `ASSERT_DEFAULT_RST)                      \
+  `ASSUME_FPV(``NAME_``TriggerAfterAlertInit_S,                                            \
+              $stable(rst_ni) == 0 |-> HIER_.ERR_NAME_ == 0 [*10])
+`define ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_IN_, GATE_, MAX_CYCLES_, ERR_NAME_) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ALERT_IN_, GATE_, MAX_CYCLES_, ERR_NAME_,           \
+                            `ASSERT_DEFAULT_CLK, `ASSERT_DEFAULT_RST)
+`define ASSERT_PRIM_COUNT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_DOUBLE_LFSR_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_FSM_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, unused_err_o)
+`define ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_REG_WE_ONEHOT_ERROR_TRIGGER_ALERT(NAME_, REG_TOP_HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT(NAME_, \
+    REG_TOP_HIER_.u_prim_reg_we_check.u_prim_onehot_check, ALERT_, GATE_, MAX_CYCLES_)
+`define ASSERT_PRIM_FIFO_SYNC_SINGLETON_ERROR_TRIGGER_ALERT(NAME, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_COUNT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_DOUBLE_LFSR_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_FSM_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, unused_err_o)
+`define ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_REG_WE_ONEHOT_ERROR_TRIGGER_ALERT_IN(NAME_, REG_TOP_HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT_IN(NAME_, \
+    REG_TOP_HIER_.u_prim_reg_we_check.u_prim_onehot_check, ALERT_, GATE_, MAX_CYCLES_)
+`define ASSERT_PRIM_FIFO_SYNC_SINGLETON_ERROR_TRIGGER_ALERT_IN(NAME, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_FSM_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = 2, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, unused_err_o, CLK_, RST_)
+`define ASSERT_PRIM_COUNT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = 2, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, err_o, CLK_, RST_)
+`define ASSERT_PRIM_DOUBLE_LFSR_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = 2, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, err_o, CLK_, RST_)
+`define ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, err_o, CLK_, RST_)
+`define ASSERT_PRIM_REG_WE_ONEHOT_ERROR_TRIGGER_ERR(NAME_, REG_TOP_HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ERR(NAME_, \
+    REG_TOP_HIER_.u_prim_reg_we_check.u_prim_onehot_check, ERR_, GATE_, MAX_CYCLES_, CLK_, RST_)
+`endif 
+`ifndef PRIM_FLOP_MACROS_SV
+`define PRIM_FLOP_MACROS_SV
+`define PRIM_FLOP_CLK clk_i
+`define PRIM_FLOP_RST rst_ni
+`define PRIM_FLOP_RESVAL '0
+`define PRIM_FLOP_A(__d, __q, __resval = `PRIM_FLOP_RESVAL, __clk = `PRIM_FLOP_CLK, __rst_n = `PRIM_FLOP_RST) \
+  always_ff @(posedge __clk or negedge __rst_n) begin \
+    if (!__rst_n) begin                               \
+      __q <= __resval;                                \
+    end else begin                                    \
+      __q <= __d;                                     \
+    end                                               \
+  end
+`define PRIM_FLOP_SPARSE_FSM(__name, __d, __q, __type, __resval = `PRIM_FLOP_RESVAL, __clk = `PRIM_FLOP_CLK, __rst_n = `PRIM_FLOP_RST, __alert_trigger_sva_en = 1) \
+  `ifdef SIMULATION                                   \
+    prim_sparse_fsm_flop #(                           \
+      .StateEnumT(__type),                            \
+      .Width($bits(__type)),                          \
+      .ResetValue($bits(__type)'(__resval)),          \
+      .EnableAlertTriggerSVA(__alert_trigger_sva_en), \
+      .CustomForceName(`PRIM_STRINGIFY(__q))          \
+    ) __name (                                        \
+      .clk_i   ( __clk   ),                           \
+      .rst_ni  ( __rst_n ),                           \
+      .state_i ( __d     ),                           \
+      .state_o (         )                            \
+    );                                                \
+    `PRIM_FLOP_A(__d, __q, __resval, __clk, __rst_n)  \
+    `ASSERT(``__name``_A, __q === ``__name``.state_o) \
+  `else                                               \
+    prim_sparse_fsm_flop #(                           \
+      .StateEnumT(__type),                            \
+      .Width($bits(__type)),                          \
+      .ResetValue($bits(__type)'(__resval)),          \
+      .EnableAlertTriggerSVA(__alert_trigger_sva_en)  \
+    ) __name (                                        \
+      .clk_i   ( __clk   ),                           \
+      .rst_ni  ( __rst_n ),                           \
+      .state_i ( __d     ),                           \
+      .state_o ( __q     )                            \
+    );                                                \
+  `endif
+`endif 
+`endif 
+module prim_trivium import prim_trivium_pkg::*;
+#(
+  parameter bit          BiviumVariant = 0,          
+  parameter int unsigned OutputWidth = 64,           
+  parameter bit          StrictLockupProtection = 1, 
+                                                     
+                                                     
+                                                     
+  parameter seed_type_e  SeedType = SeedTypeStateFull, 
+                                                       
+  parameter int unsigned PartialSeedWidth = PartialSeedWidthDefault,
+  
+  localparam int unsigned StateWidth = BiviumVariant ? BiviumStateWidth : TriviumStateWidth,
+  parameter trivium_lfsr_seed_t RndCnstTriviumLfsrSeed = RndCnstTriviumLfsrSeedDefault,
+  
+  localparam logic [StateWidth-1:0] StateSeed = RndCnstTriviumLfsrSeed[StateWidth-1:0]
+) (
+  input logic clk_i,
+  input logic rst_ni,
+  input  logic                        en_i,                 
+  input  logic                        allow_lockup_i,       
+                                                            
+                                                            
+  input  logic                        seed_en_i,            
+  output logic                        seed_done_o,          
+  output logic                        seed_req_o,           
+  input  logic                        seed_ack_i,           
+  input  logic [KeyIvWidth-1:0]       seed_key_i,           
+  input  logic [KeyIvWidth-1:0]       seed_iv_i,            
+  input  logic [StateWidth-1:0]       seed_state_full_i,    
+  input  logic [PartialSeedWidth-1:0] seed_state_partial_i, 
+  output logic [OutputWidth-1:0] key_o, 
+  output logic                   err_o  
+                                        
+                                        
+                                        
+                                        
+);
+  localparam int unsigned LastStatePartFractional = StateWidth % PartialSeedWidth != 0 ? 1 : 0;
+  localparam int unsigned NumStateParts = StateWidth / PartialSeedWidth + LastStatePartFractional;
+  localparam int unsigned NumBitsLastPart = StateWidth - (NumStateParts - 1) * PartialSeedWidth;
+  localparam int unsigned LastStatePart = NumStateParts - 1;
+  
+  localparam int unsigned StateIdxWidth = prim_util_pkg::vbits(NumStateParts);
+  logic [StateWidth-1:0] state_d, state_q;
+  logic [StateWidth-1:0] state_update, state_seed;
+  logic seed_req_d, seed_req_q;
+  logic unused_seed;
+  logic update, update_init, wr_en_seed;
+  logic [StateIdxWidth-1:0] state_idx_d, state_idx_q;
+  logic last_state_part;
+  logic lockup, restore;
+  assign update = en_i | update_init;
+  assign wr_en_seed = seed_req_o & seed_ack_i;
+  assign lockup = ~(|state_q);
+  assign err_o = lockup;
+  
+  
+  
+  
+  if (BiviumVariant) begin : gen_update_and_output_bivium
+    always_comb begin
+      state_update = state_q;
+      for (int unsigned i = 0; i < OutputWidth; i++) begin
+        key_o[i] = bivium_generate_key_stream(state_update);
+        state_update = bivium_update_state(state_update);
+      end
+    end
+  end else begin : gen_update_and_output_trivium
+    always_comb begin
+      state_update = state_q;
+      for (int unsigned i = 0; i < OutputWidth; i++) begin
+        key_o[i] = trivium_generate_key_stream(state_update);
+        state_update = trivium_update_state(state_update);
+      end
+    end
+  end
+  
+  
+  
+  if (SeedType == SeedTypeKeyIv) begin : gen_seed_type_key_iv
+    if (BiviumVariant) begin : gen_seed_type_key_iv_bivium
+      assign state_seed = bivium_seed_key_iv(seed_key_i, seed_iv_i);
+    end else begin : gen_seed_type_key_iv_trivium
+      assign state_seed = trivium_seed_key_iv(seed_key_i, seed_iv_i);
+    end
+  end else if (SeedType == SeedTypeStateFull) begin : gen_seed_type_state_full
+    assign state_seed = seed_state_full_i;
+  end else begin : gen_seed_type_state_partial
+    
+    
+    
+    
+    
+    
+    
+    always_comb begin
+      state_seed = !update ? state_q : state_update;
+      
+      if (last_state_part) begin
+        state_seed[StateWidth - 1 -: NumBitsLastPart] = seed_state_partial_i[NumBitsLastPart-1:0];
+      end else begin
+        state_seed[state_idx_q * PartialSeedWidth +: PartialSeedWidth] = seed_state_partial_i;
+      end
+    end
+  end
+  
+  
+  
+  
+  
+  
+  
+  assign restore = lockup & (StrictLockupProtection | ~allow_lockup_i);
+  assign state_d = restore     ? StateSeed    :
+                   wr_en_seed  ? state_seed   :
+                   update      ? state_update : state_q;
+  always_ff @(posedge clk_i or negedge rst_ni) begin : state_reg
+    if (!rst_ni) begin
+      state_q <= StateSeed;
+    end else begin
+      state_q <= state_d;
+    end
+  end
+  
+  assign seed_req_d = (seed_en_i | seed_req_q) & (~seed_ack_i | ~last_state_part);
+  always_ff @(posedge clk_i or negedge rst_ni) begin : seed_req_reg
+    if (!rst_ni) begin
+      seed_req_q <= 1'b0;
+    end else begin
+      seed_req_q <= seed_req_d;
+    end
+  end
+  assign seed_req_o = seed_en_i | seed_req_q;
+  if (SeedType == SeedTypeKeyIv) begin : gen_key_iv_seed_handling
+    
+    
+    
+    localparam int unsigned NumInitUpdatesFractional = (StateWidth * 4) % OutputWidth != 0 ? 1 : 0;
+    localparam int unsigned NumInitUpdates =
+        (StateWidth * 4) / OutputWidth + NumInitUpdatesFractional;
+    localparam int unsigned LastInitUpdate = NumInitUpdates - 1;
+    localparam int unsigned InitUpdatesCtrWidth = prim_util_pkg::vbits(NumInitUpdates);
+    logic [InitUpdatesCtrWidth-1:0] init_update_ctr_d, init_update_ctr_q;
+    logic init_update_d, init_update_q;
+    logic last_init_update;
+    
+    assign init_update_ctr_d = wr_en_seed    ? '0                       :
+                               init_update_q ? init_update_ctr_q + 1'b1 : init_update_ctr_q;
+    always_ff @(posedge clk_i or negedge rst_ni) begin : init_update_ctr_reg
+      if (!rst_ni) begin
+        init_update_ctr_q <= '0;
+      end else begin
+        init_update_ctr_q <= init_update_ctr_d;
+      end
+    end
+    
+    assign last_init_update = init_update_ctr_q == LastInitUpdate[InitUpdatesCtrWidth-1:0];
+    assign init_update_d = wr_en_seed       ? 1'b1 :
+                           last_init_update ? 1'b0 : init_update_q;
+    always_ff @(posedge clk_i or negedge rst_ni) begin : init_update_reg
+      if (!rst_ni) begin
+        init_update_q <= 1'b0;
+      end else begin
+        init_update_q <= init_update_d;
+      end
+    end
+    assign update_init = init_update_q;
+    
+    assign seed_done_o = init_update_q & last_init_update;
+    
+    assign state_idx_d = '0;
+    assign state_idx_q = '0;
+    assign last_state_part = 1'b0;
+    assign unused_seed = ^{seed_state_full_i,
+                           seed_state_partial_i,
+                           state_idx_d,
+                           state_idx_q,
+                           last_state_part};
+  end else if (SeedType == SeedTypeStateFull) begin : gen_full_seed_handling
+    
+    assign seed_done_o = seed_req_o & seed_ack_i;
+    
+    assign update_init = 1'b0;
+    assign state_idx_d = '0;
+    assign state_idx_q = '0;
+    assign last_state_part = 1'b1;
+    assign unused_seed = ^{seed_key_i,
+                           seed_iv_i,
+                           seed_state_partial_i,
+                           state_idx_d,
+                           state_idx_q,
+                           last_state_part};
+  end else begin : gen_partial_seed_handling
+    
+    
+    assign last_state_part = state_idx_q == LastStatePart[StateIdxWidth-1:0];
+    assign state_idx_d = wr_en_seed &  last_state_part ? '0                 :
+                         wr_en_seed & ~last_state_part ? state_idx_q + 1'b1 : state_idx_q;
+    always_ff @(posedge clk_i or negedge rst_ni) begin : state_idx_reg
+      if (!rst_ni) begin
+        state_idx_q <= '0;
+      end else begin
+        state_idx_q <= state_idx_d;
+      end
+    end
+    
+    assign seed_done_o = seed_req_o & seed_ack_i & last_state_part;
+    
+    assign update_init = 1'b0;
+    assign unused_seed = ^{seed_key_i,
+                           seed_iv_i,
+                           seed_state_full_i};
+  end
+  
+  
+  
+  
+  
+  
+  
+  
+  `ASSERT(PrimTriviumPartialStateSeedWhileUpdate_A,
+      (SeedType == SeedTypeStatePartial) && seed_req_o && en_i |-> OutputWidth >= MinNfsrWidth)
+endmodule
+
+package prim_trivium_pkg;
+  typedef enum integer {
+    SeedTypeKeyIv,        
+                          
+                          
+    SeedTypeStateFull,    
+    SeedTypeStatePartial  
+  } seed_type_e;
+  parameter int unsigned KeyIvWidth = 80;
+  parameter int unsigned PartialSeedWidthDefault = 32;
+  parameter int unsigned MinNfsrWidth = 84;
+  
+  
+  parameter int TriviumLfsrWidth = 288;
+  typedef logic [TriviumLfsrWidth-1:0] trivium_lfsr_seed_t;
+  parameter trivium_lfsr_seed_t RndCnstTriviumLfsrSeedDefault = {
+    32'h758a4420,
+    256'h31e1c461_6ea343ec_153282a3_0c132b57_23c5a4cf_4743b3c7_c32d580f_74f1713a
+  };
+  
+  
+  
+  parameter int unsigned TriviumMaxNfsrWidth = 111;
+  parameter int TriviumStateWidth = TriviumLfsrWidth;
+  function automatic logic [TriviumStateWidth-1:0] trivium_update_state(
+    logic [TriviumStateWidth-1:0] in
+  );
+    logic [TriviumStateWidth-1:0] out;
+    logic mul_90_91, mul_174_175, mul_285_286;
+    logic add_65_92, add_161_176, add_242_287;
+    
+    mul_90_91 = in[90] & in[91];
+    add_65_92 = in[65] ^ in[92];
+    
+    mul_174_175 = in[174] & in[175];
+    add_161_176 = in[161] ^ in[176];
+    
+    mul_285_286 = in[285] & in[286];
+    add_242_287 = in[242] ^ in[287];
+    
+    out[0] = in[68] ^ (mul_285_286 ^ add_242_287);
+    out[93] = in[170] ^ (add_65_92 ^ mul_90_91);
+    out[177] = in[263] ^ (mul_174_175 ^ add_161_176);
+    
+    out[92:1] = in[91:0];
+    out[176:94] = in[175:93];
+    out[287:178] = in[286:177];
+    return out;
+  endfunction
+  function automatic logic trivium_generate_key_stream(
+    logic [TriviumStateWidth-1:0] state
+  );
+    logic key;
+    logic add_65_92, add_161_176, add_242_287;
+    logic unused_state;
+    add_65_92 = state[65] ^ state[92];
+    add_161_176 = state[161] ^ state[176];
+    add_242_287 = state[242] ^ state[287];
+    key = add_161_176 ^ add_65_92 ^ add_242_287;
+    unused_state = ^{state[286:243],
+                     state[241:177],
+                     state[175:162],
+                     state[160:93],
+                     state[91:66],
+                     state[64:0]};
+    return key;
+  endfunction
+  function automatic logic [TriviumStateWidth-1:0] trivium_seed_key_iv(
+      logic [KeyIvWidth-1:0] key,
+      logic [KeyIvWidth-1:0] iv
+    );
+    logic [TriviumStateWidth-1:0] state;
+    
+    state = {3'b111,   112'b0,      iv,  13'b0,   key};
+    return state;
+  endfunction
+  
+  
+  
+  parameter int unsigned BiviumMaxNfsrWidth = 93;
+  parameter int BiviumStateWidth = 177;
+  function automatic logic [BiviumStateWidth-1:0] bivium_update_state(
+    logic [BiviumStateWidth-1:0] in
+  );
+    logic [BiviumStateWidth-1:0] out;
+    logic mul_90_91, mul_174_175;
+    logic add_65_92, add_161_176;
+    
+    mul_90_91 = in[90] & in[91];
+    add_65_92 = in[65] ^ in[92];
+    
+    mul_174_175 = in[174] & in[175];
+    add_161_176 = in[161] ^ in[176];
+    
+    out[0] = in[68] ^ (mul_174_175 ^ add_161_176);
+    out[93] = in[170] ^ add_65_92 ^ mul_90_91;
+    
+    out[92:1] = in[91:0];
+    out[176:94] = in[175:93];
+    return out;
+  endfunction
+  function automatic logic bivium_generate_key_stream(
+    logic [BiviumStateWidth-1:0] state
+  );
+    logic key;
+    logic add_65_92, add_161_176;
+    logic unused_state;
+    add_65_92 = state[65] ^ state[92];
+    add_161_176 = state[161] ^ state[176];
+    key = add_161_176 ^ add_65_92;
+    unused_state = ^{state[175:162],
+                     state[160:93],
+                     state[91:66],
+                     state[64:0]};
+    return key;
+  endfunction
+  function automatic logic [BiviumStateWidth-1:0] bivium_seed_key_iv(
+      logic [KeyIvWidth-1:0] key,
+      logic [KeyIvWidth-1:0] iv
+    );
+    logic [BiviumStateWidth-1:0] state;
+    
+    state = {4'b0,      iv,  13'b0,   key};
+    return state;
+  endfunction
+endpackage
+
+package prim_util_pkg;
+  
+  function automatic integer vbits(integer value);
+    return (value == 1) ? 1 : $clog2(value);
+  endfunction
+  
+  function automatic integer ceil_div(input integer dividend, input integer divisor);
+    ceil_div = ((dividend % divisor) != 0) ? (dividend / divisor) + 1 : (dividend / divisor);
+  endfunction
+`ifdef INC_ASSERT
+  
+  
+  
+  
+  
+  bit end_of_simulation;`endif
+endpackage
+
+package edn_pkg;
+  
+  
+  
+  parameter int unsigned   ENDPOINT_BUS_WIDTH = 32;
+  parameter int unsigned   FIPS_ENDPOINT_BUS_WIDTH = entropy_src_pkg::FIPS_BUS_WIDTH +
+                           ENDPOINT_BUS_WIDTH;
+  
+  typedef struct packed {
+    logic                                 edn_req;
+  } edn_req_t;
+  typedef struct packed {
+    logic                                 edn_ack;
+    logic                                 edn_fips;
+    logic [ENDPOINT_BUS_WIDTH-1:0]        edn_bus;
+  } edn_rsp_t;
+  parameter edn_req_t EDN_REQ_DEFAULT = '0;
+  parameter edn_rsp_t EDN_RSP_DEFAULT = '0;
+  parameter csrng_pkg::csrng_cmd_t BOOT_UNINSTANTIATE = 32'h5;
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  localparam int StateWidth = 9;
+  typedef enum logic [StateWidth-1:0] {
+    Idle                = 9'b011000001, 
+    BootLoadIns         = 9'b111000111, 
+    BootInsAckWait      = 9'b001111001, 
+    BootLoadGen         = 9'b000000011, 
+    BootGenAckWait      = 9'b001110111, 
+    BootPulse           = 9'b010101001, 
+    BootDone            = 9'b011110000, 
+    BootLoadUni         = 9'b100110101, 
+    BootUniAckWait      = 9'b000101100, 
+    AutoLoadIns         = 9'b110111100, 
+    AutoFirstAckWait    = 9'b110100011, 
+    AutoAckWait         = 9'b010010010, 
+    AutoDispatch        = 9'b101100001, 
+    AutoCaptGenCnt      = 9'b100001110, 
+    AutoSendGenCmd      = 9'b111011101, 
+    AutoCaptReseedCnt   = 9'b010111111, 
+    AutoSendReseedCmd   = 9'b001101010, 
+    SWPortMode          = 9'b010010101, 
+    RejectCsrngEntropy  = 9'b000011000, 
+    Error               = 9'b101111110  
+  } state_e;
+endpackage : edn_pkg
+
+package csrng_pkg;
+  parameter int unsigned NumAppsLg = $clog2(csrng_reg_pkg::NumApps);
+  
+  
+  
+  
+  parameter int unsigned BlkLen = 128;
+  
+  parameter int unsigned KeyLen = 256;
+  
+  parameter int unsigned SeedLen = BlkLen + KeyLen;
+  
+  
+  parameter int unsigned CtrLen = 32;
+  parameter int unsigned RsCtrWidth = 32;
+  
+  parameter int unsigned GenBitsCtrWidth = 12;
+  
+  parameter int unsigned CmdWidth = 3;
+  parameter int unsigned InstIdWidth = 4;
+  
+  parameter int unsigned CmdBusWidth = 32;
+  
+  parameter int unsigned CmdMaxClen = 12;
+  parameter int unsigned CmdFifoDepth = 2;
+  parameter int unsigned CmdFifoDepthLg = $clog2(CmdFifoDepth);
+  parameter int unsigned GENBITS_BUS_WIDTH = BlkLen;
+  parameter int unsigned FIPS_GENBITS_BUS_WIDTH = entropy_src_pkg::FIPS_BUS_WIDTH +
+                         GENBITS_BUS_WIDTH;
+  
+  
+  
+  typedef struct packed {
+    logic                   csrng_req_valid;
+    logic [CmdBusWidth-1:0] csrng_req_bus;
+    logic                   genbits_ready;
+  } csrng_req_t;
+  parameter int unsigned CmdStatusWidth = 3;
+  typedef enum logic [CmdStatusWidth-1:0] {
+    CMD_STS_SUCCESS              = 'h0,
+    CMD_STS_INVALID_ACMD         = 'h1,
+    CMD_STS_INVALID_GEN_CMD      = 'h2,
+    CMD_STS_INVALID_CMD_SEQ      = 'h3,
+    CMD_STS_RESEED_CNT_EXCEEDED  = 'h4,
+    CMD_STS_UNDRIVEN             = 'z
+  } csrng_cmd_sts_e;
+  typedef struct packed {
+    logic                         csrng_req_ready;
+    logic                         csrng_rsp_ack;
+    csrng_cmd_sts_e               csrng_rsp_sts;
+    logic                         genbits_valid;
+    logic                         genbits_fips;
+    logic [GENBITS_BUS_WIDTH-1:0] genbits_bus;
+  } csrng_rsp_t;
+  parameter csrng_req_t CSRNG_REQ_DEFAULT = '{default: '0};
+  parameter csrng_rsp_t CSRNG_RSP_DEFAULT = '0;
+  typedef enum logic [CmdWidth-1:0] {
+    INV  = 3'h0,
+    INS  = 3'h1,
+    RES  = 3'h2,
+    GEN  = 3'h3,
+    UPD  = 3'h4,
+    UNI  = 3'h5
+  } acmd_e;
+  typedef struct packed {
+    logic  [7:0] resv;
+    logic [11:0] glen;
+    logic  [3:0] flag0;
+    logic  [3:0] clen;
+    logic        gap; 
+    acmd_e       acmd;
+  } csrng_cmd_t;
+  
+  
+  
+  typedef struct packed {
+    logic                   fips;
+    logic  [RsCtrWidth-1:0] rs_ctr;
+    logic     [SeedLen-1:0] pdata;
+    logic   [NumAppsLg-1:0] inst_id;
+    acmd_e                  cmd;
+    logic      [KeyLen-1:0] key;
+    logic      [BlkLen-1:0] v;
+  } csrng_core_data_t;
+  typedef struct packed {
+    logic [KeyLen-1:0] key;
+    logic [BlkLen-1:0] v;
+  } csrng_key_v_t;
+  
+  
+  typedef struct packed {
+    logic                  fips;
+    logic                  inst_state;
+    logic     [KeyLen-1:0] key;
+    logic     [BlkLen-1:0] v;
+    logic [RsCtrWidth-1:0] rs_ctr;
+  } csrng_state_t;
+  parameter int unsigned StateWidth    = $bits(csrng_state_t);
+  parameter int unsigned MainSmStateWidth = 6;
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  typedef enum logic [MainSmStateWidth-1:0] {
+    MainSmIdle        = 6'b110111, 
+    MainSmParseCmd    = 6'b011101, 
+    MainSmEntropyReq  = 6'b001110, 
+    MainSmCmdPrep     = 6'b000011, 
+    MainSmCmdVld      = 6'b010000, 
+    MainSmClrAData    = 6'b111010, 
+    MainSmCmdCompWait = 6'b100100, 
+    MainSmError       = 6'b101001  
+  } main_sm_state_e;
+  parameter int CsKeymgrDivWidth = 384;
+  typedef logic [CsKeymgrDivWidth-1:0] cs_keymgr_div_t;
+endpackage : csrng_pkg
+
+package csrng_reg_pkg;
+  
+  parameter int NumApps = 3;
+  parameter int NumAlerts = 2;
+  
+  parameter int BlockAw = 7;
+  
+  parameter int NumRegs = 24;
+  
+  typedef enum int {
+    AlertRecovAlertIdx = 0,
+    AlertFatalAlertIdx = 1
+  } csrng_alert_idx_t;
+  
+  
+  
+  typedef struct packed {
+    struct packed {
+      logic        q;
+    } cs_fatal_err;
+    struct packed {
+      logic        q;
+    } cs_hw_inst_exc;
+    struct packed {
+      logic        q;
+    } cs_entropy_req;
+    struct packed {
+      logic        q;
+    } cs_cmd_req_done;
+  } csrng_reg2hw_intr_state_reg_t;
+  typedef struct packed {
+    struct packed {
+      logic        q;
+    } cs_fatal_err;
+    struct packed {
+      logic        q;
+    } cs_hw_inst_exc;
+    struct packed {
+      logic        q;
+    } cs_entropy_req;
+    struct packed {
+      logic        q;
+    } cs_cmd_req_done;
+  } csrng_reg2hw_intr_enable_reg_t;
+  typedef struct packed {
+    struct packed {
+      logic        q;
+      logic        qe;
+    } cs_fatal_err;
+    struct packed {
+      logic        q;
+      logic        qe;
+    } cs_hw_inst_exc;
+    struct packed {
+      logic        q;
+      logic        qe;
+    } cs_entropy_req;
+    struct packed {
+      logic        q;
+      logic        qe;
+    } cs_cmd_req_done;
+  } csrng_reg2hw_intr_test_reg_t;
+  typedef struct packed {
+    struct packed {
+      logic        q;
+      logic        qe;
+    } fatal_alert;
+    struct packed {
+      logic        q;
+      logic        qe;
+    } recov_alert;
+  } csrng_reg2hw_alert_test_reg_t;
+  typedef struct packed {
+    struct packed {
+      logic [3:0]  q;
+    } fips_force_enable;
+    struct packed {
+      logic [3:0]  q;
+    } read_int_state;
+    struct packed {
+      logic [3:0]  q;
+    } sw_app_enable;
+    struct packed {
+      logic [3:0]  q;
+    } enable;
+  } csrng_reg2hw_ctrl_reg_t;
+  typedef struct packed {
+    logic [31:0] q;
+    logic        qe;
+  } csrng_reg2hw_cmd_req_reg_t;
+  typedef struct packed {
+    logic [31:0] q;
+    logic        qe;
+  } csrng_reg2hw_reseed_interval_reg_t;
+  typedef struct packed {
+    logic [31:0] q;
+    logic        re;
+  } csrng_reg2hw_genbits_reg_t;
+  typedef struct packed {
+    logic [2:0]  q;
+  } csrng_reg2hw_int_state_read_enable_reg_t;
+  typedef struct packed {
+    logic [3:0]  q;
+    logic        qe;
+  } csrng_reg2hw_int_state_num_reg_t;
+  typedef struct packed {
+    logic [31:0] q;
+    logic        re;
+  } csrng_reg2hw_int_state_val_reg_t;
+  typedef struct packed {
+    logic [2:0]  q;
+  } csrng_reg2hw_fips_force_reg_t;
+  typedef struct packed {
+    logic [4:0]  q;
+    logic        qe;
+  } csrng_reg2hw_err_code_test_reg_t;
+  typedef struct packed {
+    struct packed {
+      logic        d;
+      logic        de;
+    } cs_fatal_err;
+    struct packed {
+      logic        d;
+      logic        de;
+    } cs_hw_inst_exc;
+    struct packed {
+      logic        d;
+      logic        de;
+    } cs_entropy_req;
+    struct packed {
+      logic        d;
+      logic        de;
+    } cs_cmd_req_done;
+  } csrng_hw2reg_intr_state_reg_t;
+  typedef struct packed {
+    logic [31:0] d;
+  } csrng_hw2reg_reseed_counter_mreg_t;
+  typedef struct packed {
+    struct packed {
+      logic [2:0]  d;
+      logic        de;
+    } cmd_sts;
+    struct packed {
+      logic        d;
+      logic        de;
+    } cmd_ack;
+    struct packed {
+      logic        d;
+      logic        de;
+    } cmd_rdy;
+  } csrng_hw2reg_sw_cmd_sts_reg_t;
+  typedef struct packed {
+    struct packed {
+      logic        d;
+    } genbits_fips;
+    struct packed {
+      logic        d;
+    } genbits_vld;
+  } csrng_hw2reg_genbits_vld_reg_t;
+  typedef struct packed {
+    logic [31:0] d;
+  } csrng_hw2reg_genbits_reg_t;
+  typedef struct packed {
+    logic [31:0] d;
+  } csrng_hw2reg_int_state_val_reg_t;
+  typedef struct packed {
+    logic [15:0] d;
+    logic        de;
+  } csrng_hw2reg_hw_exc_sts_reg_t;
+  typedef struct packed {
+    struct packed {
+      logic        d;
+      logic        de;
+    } cmd_stage_reseed_cnt_alert;
+    struct packed {
+      logic        d;
+      logic        de;
+    } cmd_stage_invalid_cmd_seq_alert;
+    struct packed {
+      logic        d;
+      logic        de;
+    } cmd_stage_invalid_acmd_alert;
+    struct packed {
+      logic        d;
+      logic        de;
+    } cs_bus_cmp_alert;
+    struct packed {
+      logic        d;
+      logic        de;
+    } acmd_flag0_field_alert;
+    struct packed {
+      logic        d;
+      logic        de;
+    } fips_force_enable_field_alert;
+    struct packed {
+      logic        d;
+      logic        de;
+    } read_int_state_field_alert;
+    struct packed {
+      logic        d;
+      logic        de;
+    } sw_app_enable_field_alert;
+    struct packed {
+      logic        d;
+      logic        de;
+    } enable_field_alert;
+  } csrng_hw2reg_recov_alert_sts_reg_t;
+  typedef struct packed {
+    struct packed {
+      logic        d;
+      logic        de;
+    } fifo_state_err;
+    struct packed {
+      logic        d;
+      logic        de;
+    } fifo_read_err;
+    struct packed {
+      logic        d;
+      logic        de;
+    } fifo_write_err;
+    struct packed {
+      logic        d;
+      logic        de;
+    } ctr_err;
+    struct packed {
+      logic        d;
+      logic        de;
+    } aes_cipher_sm_err;
+    struct packed {
+      logic        d;
+      logic        de;
+    } ctr_drbg_sm_err;
+    struct packed {
+      logic        d;
+      logic        de;
+    } main_sm_err;
+    struct packed {
+      logic        d;
+      logic        de;
+    } cmd_stage_sm_err;
+    struct packed {
+      logic        d;
+      logic        de;
+    } sfifo_genbits_err;
+    struct packed {
+      logic        d;
+      logic        de;
+    } sfifo_cmd_err;
+  } csrng_hw2reg_err_code_reg_t;
+  typedef struct packed {
+    logic [5:0]  d;
+    logic        de;
+  } csrng_hw2reg_main_sm_state_reg_t;
+  
+  typedef struct packed {
+    csrng_reg2hw_intr_state_reg_t intr_state; 
+    csrng_reg2hw_intr_enable_reg_t intr_enable; 
+    csrng_reg2hw_intr_test_reg_t intr_test; 
+    csrng_reg2hw_alert_test_reg_t alert_test; 
+    csrng_reg2hw_ctrl_reg_t ctrl; 
+    csrng_reg2hw_cmd_req_reg_t cmd_req; 
+    csrng_reg2hw_reseed_interval_reg_t reseed_interval; 
+    csrng_reg2hw_genbits_reg_t genbits; 
+    csrng_reg2hw_int_state_read_enable_reg_t int_state_read_enable; 
+    csrng_reg2hw_int_state_num_reg_t int_state_num; 
+    csrng_reg2hw_int_state_val_reg_t int_state_val; 
+    csrng_reg2hw_fips_force_reg_t fips_force; 
+    csrng_reg2hw_err_code_test_reg_t err_code_test; 
+  } csrng_reg2hw_t;
+  
+  typedef struct packed {
+    csrng_hw2reg_intr_state_reg_t intr_state; 
+    csrng_hw2reg_reseed_counter_mreg_t [2:0] reseed_counter; 
+    csrng_hw2reg_sw_cmd_sts_reg_t sw_cmd_sts; 
+    csrng_hw2reg_genbits_vld_reg_t genbits_vld; 
+    csrng_hw2reg_genbits_reg_t genbits; 
+    csrng_hw2reg_int_state_val_reg_t int_state_val; 
+    csrng_hw2reg_hw_exc_sts_reg_t hw_exc_sts; 
+    csrng_hw2reg_recov_alert_sts_reg_t recov_alert_sts; 
+    csrng_hw2reg_err_code_reg_t err_code; 
+    csrng_hw2reg_main_sm_state_reg_t main_sm_state; 
+  } csrng_hw2reg_t;
+  
+  parameter logic [BlockAw-1:0] CSRNG_INTR_STATE_OFFSET = 7'h 0;
+  parameter logic [BlockAw-1:0] CSRNG_INTR_ENABLE_OFFSET = 7'h 4;
+  parameter logic [BlockAw-1:0] CSRNG_INTR_TEST_OFFSET = 7'h 8;
+  parameter logic [BlockAw-1:0] CSRNG_ALERT_TEST_OFFSET = 7'h c;
+  parameter logic [BlockAw-1:0] CSRNG_REGWEN_OFFSET = 7'h 10;
+  parameter logic [BlockAw-1:0] CSRNG_CTRL_OFFSET = 7'h 14;
+  parameter logic [BlockAw-1:0] CSRNG_CMD_REQ_OFFSET = 7'h 18;
+  parameter logic [BlockAw-1:0] CSRNG_RESEED_INTERVAL_OFFSET = 7'h 1c;
+  parameter logic [BlockAw-1:0] CSRNG_RESEED_COUNTER_0_OFFSET = 7'h 20;
+  parameter logic [BlockAw-1:0] CSRNG_RESEED_COUNTER_1_OFFSET = 7'h 24;
+  parameter logic [BlockAw-1:0] CSRNG_RESEED_COUNTER_2_OFFSET = 7'h 28;
+  parameter logic [BlockAw-1:0] CSRNG_SW_CMD_STS_OFFSET = 7'h 2c;
+  parameter logic [BlockAw-1:0] CSRNG_GENBITS_VLD_OFFSET = 7'h 30;
+  parameter logic [BlockAw-1:0] CSRNG_GENBITS_OFFSET = 7'h 34;
+  parameter logic [BlockAw-1:0] CSRNG_INT_STATE_READ_ENABLE_OFFSET = 7'h 38;
+  parameter logic [BlockAw-1:0] CSRNG_INT_STATE_READ_ENABLE_REGWEN_OFFSET = 7'h 3c;
+  parameter logic [BlockAw-1:0] CSRNG_INT_STATE_NUM_OFFSET = 7'h 40;
+  parameter logic [BlockAw-1:0] CSRNG_INT_STATE_VAL_OFFSET = 7'h 44;
+  parameter logic [BlockAw-1:0] CSRNG_FIPS_FORCE_OFFSET = 7'h 48;
+  parameter logic [BlockAw-1:0] CSRNG_HW_EXC_STS_OFFSET = 7'h 4c;
+  parameter logic [BlockAw-1:0] CSRNG_RECOV_ALERT_STS_OFFSET = 7'h 50;
+  parameter logic [BlockAw-1:0] CSRNG_ERR_CODE_OFFSET = 7'h 54;
+  parameter logic [BlockAw-1:0] CSRNG_ERR_CODE_TEST_OFFSET = 7'h 58;
+  parameter logic [BlockAw-1:0] CSRNG_MAIN_SM_STATE_OFFSET = 7'h 5c;
+  
+  parameter logic [3:0] CSRNG_INTR_TEST_RESVAL = 4'h 0;
+  parameter logic [0:0] CSRNG_INTR_TEST_CS_CMD_REQ_DONE_RESVAL = 1'h 0;
+  parameter logic [0:0] CSRNG_INTR_TEST_CS_ENTROPY_REQ_RESVAL = 1'h 0;
+  parameter logic [0:0] CSRNG_INTR_TEST_CS_HW_INST_EXC_RESVAL = 1'h 0;
+  parameter logic [0:0] CSRNG_INTR_TEST_CS_FATAL_ERR_RESVAL = 1'h 0;
+  parameter logic [1:0] CSRNG_ALERT_TEST_RESVAL = 2'h 0;
+  parameter logic [0:0] CSRNG_ALERT_TEST_RECOV_ALERT_RESVAL = 1'h 0;
+  parameter logic [0:0] CSRNG_ALERT_TEST_FATAL_ALERT_RESVAL = 1'h 0;
+  parameter logic [31:0] CSRNG_RESEED_COUNTER_0_RESVAL = 32'h 0;
+  parameter logic [31:0] CSRNG_RESEED_COUNTER_0_RESEED_COUNTER_0_RESVAL = 32'h 0;
+  parameter logic [31:0] CSRNG_RESEED_COUNTER_1_RESVAL = 32'h 0;
+  parameter logic [31:0] CSRNG_RESEED_COUNTER_1_RESEED_COUNTER_1_RESVAL = 32'h 0;
+  parameter logic [31:0] CSRNG_RESEED_COUNTER_2_RESVAL = 32'h 0;
+  parameter logic [31:0] CSRNG_RESEED_COUNTER_2_RESEED_COUNTER_2_RESVAL = 32'h 0;
+  parameter logic [1:0] CSRNG_GENBITS_VLD_RESVAL = 2'h 0;
+  parameter logic [31:0] CSRNG_GENBITS_RESVAL = 32'h 0;
+  parameter logic [31:0] CSRNG_INT_STATE_VAL_RESVAL = 32'h 0;
+  
+  typedef enum int {
+    CSRNG_INTR_STATE,
+    CSRNG_INTR_ENABLE,
+    CSRNG_INTR_TEST,
+    CSRNG_ALERT_TEST,
+    CSRNG_REGWEN,
+    CSRNG_CTRL,
+    CSRNG_CMD_REQ,
+    CSRNG_RESEED_INTERVAL,
+    CSRNG_RESEED_COUNTER_0,
+    CSRNG_RESEED_COUNTER_1,
+    CSRNG_RESEED_COUNTER_2,
+    CSRNG_SW_CMD_STS,
+    CSRNG_GENBITS_VLD,
+    CSRNG_GENBITS,
+    CSRNG_INT_STATE_READ_ENABLE,
+    CSRNG_INT_STATE_READ_ENABLE_REGWEN,
+    CSRNG_INT_STATE_NUM,
+    CSRNG_INT_STATE_VAL,
+    CSRNG_FIPS_FORCE,
+    CSRNG_HW_EXC_STS,
+    CSRNG_RECOV_ALERT_STS,
+    CSRNG_ERR_CODE,
+    CSRNG_ERR_CODE_TEST,
+    CSRNG_MAIN_SM_STATE
+  } csrng_id_e;
+  
+  parameter logic [3:0] CSRNG_PERMIT [24] = '{
+    4'b 0001, 
+    4'b 0001, 
+    4'b 0001, 
+    4'b 0001, 
+    4'b 0001, 
+    4'b 0011, 
+    4'b 1111, 
+    4'b 1111, 
+    4'b 1111, 
+    4'b 1111, 
+    4'b 1111, 
+    4'b 0001, 
+    4'b 0001, 
+    4'b 1111, 
+    4'b 0001, 
+    4'b 0001, 
+    4'b 0001, 
+    4'b 1111, 
+    4'b 0001, 
+    4'b 0011, 
+    4'b 0011, 
+    4'b 1111, 
+    4'b 0001, 
+    4'b 0001  
+  };
+endpackage
+
+`ifndef PRIM_ASSERT_SV
+`define PRIM_ASSERT_SV
+`define ASSERT_DEFAULT_CLK clk_i
+`define ASSERT_DEFAULT_RST !rst_ni
+`define PRIM_STRINGIFY(__x) `"__x`"
+`define ASSERT_ERROR(__name)                                                             \
+`ifdef UVM                                                                               \
+  uvm_pkg::uvm_report_error("ASSERT FAILED", `PRIM_STRINGIFY(__name), uvm_pkg::UVM_NONE, \
+                            `__FILE__, `__LINE__, "", 1);                                \
+`else                                                                                    \
+  $error("%0t: (%0s:%0d) [%m] [ASSERT FAILED] %0s", $time, `__FILE__, `__LINE__,         \
+         `PRIM_STRINGIFY(__name));                                                       \
+`endif
+`define ASSERT_STATIC_LINT_ERROR(__name, __prop)     \
+  localparam int __name = (__prop) ? 1 : 2;          \
+  always_comb begin                                  \
+    logic unused_assert_static_lint_error;           \
+    unused_assert_static_lint_error = __name'(1'b1); \
+  end
+`define ASSERT_STATIC_IN_PACKAGE(__name, __prop)              \
+  function automatic bit assert_static_in_package_``__name(); \
+    bit unused_bit [((__prop) ? 1 : -1)];                     \
+    unused_bit = '{default: 1'b0};                            \
+    return unused_bit[0];                                     \
+  endfunction
+`ifdef VERILATOR
+ `include "prim_assert_dummy_macros.svh"`elsif SYNTHESIS
+ `include "prim_assert_dummy_macros.svh"`elsif YOSYS
+ `include "prim_assert_yosys_macros.svh"
+ `define INC_ASSERT`else
+ 
+`define ASSERT_I(__name, __prop) \
+  __name: assert (__prop)        \
+    else begin                   \
+      `ASSERT_ERROR(__name)      \
+    end
+`define ASSERT_INIT(__name, __prop)                                                  \
+`ifdef FPV_ON                                                                        \
+  if (!(__prop)) $fatal(2, "Fatal static assertion [%s]: (%s) is not true.",         \
+                        (__name), (__prop));                                         \
+`else                                                                                \
+  initial begin                                                                      \
+    __name: assert (__prop)                                                          \
+      else begin                                                                     \
+        `ASSERT_ERROR(__name)                                                        \
+      end                                                                            \
+  end                                                                                \
+`endif
+`define ASSERT_INIT_NET(__name, __prop)                                                   \
+  initial begin                                                                      \
+    
+    
+    
+    #1ps;                                                                            \
+    __name: assert (__prop)                                                          \
+      else begin                                                                     \
+        `ASSERT_ERROR(__name)                                                        \
+      end                                                                            \
+  end                                                                                \
+`define ASSERT_FINAL(__name, __prop)                                         \
+`ifndef FPV_ON                                                               \
+  final begin                                                                \
+    __name: assert (__prop || $test$plusargs("disable_assert_final_checks")) \
+      else begin                                                             \
+        `ASSERT_ERROR(__name)                                                \
+      end                                                                    \
+  end                                                                        \
+`endif
+`define ASSERT_AT_RESET(__name, __prop, __rst = `ASSERT_DEFAULT_RST)          \
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+`ifndef FPV_ON                                                                \
+  __name: assert property (@(posedge __rst) $isunknown(__rst) || (__prop))    \
+`else                                                                         \
+  __name: assert property (@(posedge __rst) (__prop))                         \
+`endif                                                                        \
+    else begin                                                                \
+      `ASSERT_ERROR(__name)                                                   \
+    end
+`define ASSERT_AT_RESET_AND_FINAL(__name, __prop, __rst = `ASSERT_DEFAULT_RST) \
+    `ASSERT_AT_RESET(AtReset_``__name``, __prop, __rst)                        \
+    `ASSERT_FINAL(Final_``__name``, __prop)
+`define ASSERT(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: assert property (@(posedge __clk) disable iff ((__rst) !== '0) (__prop))       \
+    else begin                                                                           \
+      `ASSERT_ERROR(__name)                                                              \
+    end
+`define ASSERT_NEVER(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: assert property (@(posedge __clk) disable iff ((__rst) !== '0) not (__prop))         \
+    else begin                                                                                 \
+      `ASSERT_ERROR(__name)                                                                    \
+    end
+`define ASSERT_KNOWN(__name, __sig, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifndef FPV_ON                                                                                \
+  `ASSERT(__name, !$isunknown(__sig), __clk, __rst)                                           \
+`endif
+`define COVER(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: cover property (@(posedge __clk) disable iff ((__rst) !== '0) (__prop));
+`define ASSUME(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: assume property (@(posedge __clk) disable iff ((__rst) !== '0) (__prop))       \
+    else begin                                                                           \
+      `ASSERT_ERROR(__name)                                                              \
+    end
+`define ASSUME_I(__name, __prop) \
+  __name: assume (__prop)        \
+    else begin                   \
+      `ASSERT_ERROR(__name)      \
+    end
+ `define INC_ASSERT
+`endif
+`define ASSERT_PULSE(__name, __sig, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  `ASSERT(__name, $rose(__sig) |=> !(__sig), __clk, __rst)
+`define ASSERT_IF(__name, __prop, __enable, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  `ASSERT(__name, (__enable) |-> (__prop), __clk, __rst)
+`define ASSERT_KNOWN_IF(__name, __sig, __enable, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifndef FPV_ON                                                                                             \
+  `ASSERT_KNOWN(__name``KnownEnable, __enable, __clk, __rst)                                               \
+  `ASSERT_IF(__name, !$isunknown(__sig), __enable, __clk, __rst)                                           \
+`endif
+`define ASSUME_FPV(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifdef FPV_ON                                                                                \
+   `ASSUME(__name, __prop, __clk, __rst)                                                     \
+`endif
+`define ASSUME_I_FPV(__name, __prop) \
+`ifdef FPV_ON                        \
+   `ASSUME_I(__name, __prop)         \
+`endif
+`define COVER_FPV(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifdef FPV_ON                                                                               \
+   `COVER(__name, __prop, __clk, __rst)                                                     \
+`endif
+`define ASSERT_FPV_LINEAR_FSM(__name, __state, __type, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  `ifdef INC_ASSERT                                                                                              \
+     bit __name``_cond;                                                                                          \
+     always_ff @(posedge __clk or posedge __rst) begin                                                           \
+       if (__rst) begin                                                                                          \
+         __name``_cond <= 0;                                                                                     \
+       end else begin                                                                                            \
+         __name``_cond <= 1;                                                                                     \
+       end                                                                                                       \
+     end                                                                                                         \
+     property __name``_p;                                                                                        \
+       __type initial_state;                                                                                     \
+       (!$stable(__state) & __name``_cond, initial_state = $past(__state)) |->                                   \
+           (__state != initial_state) until !(__name``_cond);                                                    \
+     endproperty                                                                                                 \
+   `ASSERT(__name, __name``_p, __clk, 0)                                                                         \
+  `endif
+`ifndef PRIM_ASSERT_SEC_CM_SVH
+`define PRIM_ASSERT_SEC_CM_SVH
+`define _SEC_CM_ALERT_MAX_CYC 30
+`define ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, ERR_NAME_, CLK_, RST_) \
+  `ASSERT(FpvSecCm``NAME_``,                                                                    \
+          $rose(HIER_.ERR_NAME_) && !(GATE_) |-> ##[0:MAX_CYCLES_] (ERR_),                      \
+          CLK_, RST_)                                                                           \
+  `ifdef INC_ASSERT                                                                             \
+    assign HIER_.unused_assert_connected = 1'b1;                                                \
+  `endif
+`define ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, ERR_NAME_)    \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, (ALERT_.alert_p), GATE_, MAX_CYCLES_, ERR_NAME_, \
+                            `ASSERT_DEFAULT_CLK, `ASSERT_DEFAULT_RST)                      \
+  `ASSUME_FPV(``NAME_``TriggerAfterAlertInit_S,                                            \
+              $stable(rst_ni) == 0 |-> HIER_.ERR_NAME_ == 0 [*10])
+`define ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_IN_, GATE_, MAX_CYCLES_, ERR_NAME_) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ALERT_IN_, GATE_, MAX_CYCLES_, ERR_NAME_,           \
+                            `ASSERT_DEFAULT_CLK, `ASSERT_DEFAULT_RST)
+`define ASSERT_PRIM_COUNT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_DOUBLE_LFSR_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_FSM_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, unused_err_o)
+`define ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_REG_WE_ONEHOT_ERROR_TRIGGER_ALERT(NAME_, REG_TOP_HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT(NAME_, \
+    REG_TOP_HIER_.u_prim_reg_we_check.u_prim_onehot_check, ALERT_, GATE_, MAX_CYCLES_)
+`define ASSERT_PRIM_FIFO_SYNC_SINGLETON_ERROR_TRIGGER_ALERT(NAME, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_COUNT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_DOUBLE_LFSR_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_FSM_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, unused_err_o)
+`define ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_REG_WE_ONEHOT_ERROR_TRIGGER_ALERT_IN(NAME_, REG_TOP_HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT_IN(NAME_, \
+    REG_TOP_HIER_.u_prim_reg_we_check.u_prim_onehot_check, ALERT_, GATE_, MAX_CYCLES_)
+`define ASSERT_PRIM_FIFO_SYNC_SINGLETON_ERROR_TRIGGER_ALERT_IN(NAME, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_FSM_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = 2, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, unused_err_o, CLK_, RST_)
+`define ASSERT_PRIM_COUNT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = 2, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, err_o, CLK_, RST_)
+`define ASSERT_PRIM_DOUBLE_LFSR_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = 2, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, err_o, CLK_, RST_)
+`define ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, err_o, CLK_, RST_)
+`define ASSERT_PRIM_REG_WE_ONEHOT_ERROR_TRIGGER_ERR(NAME_, REG_TOP_HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ERR(NAME_, \
+    REG_TOP_HIER_.u_prim_reg_we_check.u_prim_onehot_check, ERR_, GATE_, MAX_CYCLES_, CLK_, RST_)
+`endif 
+`ifndef PRIM_FLOP_MACROS_SV
+`define PRIM_FLOP_MACROS_SV
+`define PRIM_FLOP_CLK clk_i
+`define PRIM_FLOP_RST rst_ni
+`define PRIM_FLOP_RESVAL '0
+`define PRIM_FLOP_A(__d, __q, __resval = `PRIM_FLOP_RESVAL, __clk = `PRIM_FLOP_CLK, __rst_n = `PRIM_FLOP_RST) \
+  always_ff @(posedge __clk or negedge __rst_n) begin \
+    if (!__rst_n) begin                               \
+      __q <= __resval;                                \
+    end else begin                                    \
+      __q <= __d;                                     \
+    end                                               \
+  end
+`define PRIM_FLOP_SPARSE_FSM(__name, __d, __q, __type, __resval = `PRIM_FLOP_RESVAL, __clk = `PRIM_FLOP_CLK, __rst_n = `PRIM_FLOP_RST, __alert_trigger_sva_en = 1) \
+  `ifdef SIMULATION                                   \
+    prim_sparse_fsm_flop #(                           \
+      .StateEnumT(__type),                            \
+      .Width($bits(__type)),                          \
+      .ResetValue($bits(__type)'(__resval)),          \
+      .EnableAlertTriggerSVA(__alert_trigger_sva_en), \
+      .CustomForceName(`PRIM_STRINGIFY(__q))          \
+    ) __name (                                        \
+      .clk_i   ( __clk   ),                           \
+      .rst_ni  ( __rst_n ),                           \
+      .state_i ( __d     ),                           \
+      .state_o (         )                            \
+    );                                                \
+    `PRIM_FLOP_A(__d, __q, __resval, __clk, __rst_n)  \
+    `ASSERT(``__name``_A, __q === ``__name``.state_o) \
+  `else                                               \
+    prim_sparse_fsm_flop #(                           \
+      .StateEnumT(__type),                            \
+      .Width($bits(__type)),                          \
+      .ResetValue($bits(__type)'(__resval)),          \
+      .EnableAlertTriggerSVA(__alert_trigger_sva_en)  \
+    ) __name (                                        \
+      .clk_i   ( __clk   ),                           \
+      .rst_ni  ( __rst_n ),                           \
+      .state_i ( __d     ),                           \
+      .state_o ( __q     )                            \
+    );                                                \
+  `endif
+`endif 
+`endif 
+module aes_cipher_control import aes_pkg::*;
+#(
+  parameter bit         CiphOpFwdOnly = 0,
+  parameter bit         SecMasking    = 0,
+  parameter sbox_impl_e SecSBoxImpl   = SBoxImplDom
+) (
+  input  logic                    clk_i,
+  input  logic                    rst_ni,
+  
+  input  sp2v_e                   in_valid_i,
+  output sp2v_e                   in_ready_o,
+  
+  output sp2v_e                   out_valid_o,
+  input  sp2v_e                   out_ready_i,
+  
+  input  logic                    cfg_valid_i,
+  input  ciph_op_e                op_i,
+  input  key_len_e                key_len_i,
+  input  sp2v_e                   crypt_i,
+  output sp2v_e                   crypt_o,
+  input  sp2v_e                   dec_key_gen_i,
+  output sp2v_e                   dec_key_gen_o,
+  input  logic                    prng_reseed_i,
+  output logic                    prng_reseed_o,
+  input  logic                    key_clear_i,
+  output logic                    key_clear_o,
+  input  logic                    data_out_clear_i,
+  output logic                    data_out_clear_o,
+  input  logic                    mux_sel_err_i,
+  input  logic                    sp_enc_err_i,
+  input  logic                    op_err_i,
+  input  logic                    alert_fatal_i,
+  output logic                    alert_o,
+  
+  output logic                    prng_update_o,
+  output logic                    prng_reseed_req_o,
+  input  logic                    prng_reseed_ack_i,
+  
+  output state_sel_e              state_sel_o,
+  output sp2v_e                   state_we_o,
+  output sp2v_e                   sub_bytes_en_o,
+  input  sp2v_e                   sub_bytes_out_req_i,
+  output sp2v_e                   sub_bytes_out_ack_o,
+  output add_rk_sel_e             add_rk_sel_o,
+  
+  output ciph_op_e                key_expand_op_o,
+  output key_full_sel_e           key_full_sel_o,
+  output sp2v_e                   key_full_we_o,
+  output key_dec_sel_e            key_dec_sel_o,
+  output sp2v_e                   key_dec_we_o,
+  output sp2v_e                   key_expand_en_o,
+  input  sp2v_e                   key_expand_out_req_i,
+  output sp2v_e                   key_expand_out_ack_o,
+  output logic                    key_expand_clear_o,
+  output logic [3:0]              key_expand_round_o,
+  output key_words_sel_e          key_words_sel_o,
+  output round_key_sel_e          round_key_sel_o
+);
+  
+  logic                          [3:0] rnd_ctr;
+  sp2v_e                               crypt_d, crypt_q;
+  sp2v_e                               dec_key_gen_d, dec_key_gen_q;
+  logic                                prng_reseed_d, prng_reseed_q;
+  logic                                key_clear_d, key_clear_q;
+  logic                                data_out_clear_d, data_out_clear_q;
+  sp2v_e                               sub_bytes_out_req;
+  sp2v_e                               key_expand_out_req;
+  sp2v_e                               in_valid;
+  sp2v_e                               out_ready;
+  sp2v_e                               crypt;
+  sp2v_e                               dec_key_gen;
+  logic                                mux_sel_err;
+  logic                                mr_err;
+  logic                                sp_enc_err;
+  logic                                rnd_ctr_err;
+  
+  
+  logic           [Sp2VWidth-1:0]      sp_in_valid;
+  logic           [Sp2VWidth-1:0]      sp_in_ready;
+  logic           [Sp2VWidth-1:0]      sp_out_valid;
+  logic           [Sp2VWidth-1:0]      sp_out_ready;
+  logic           [Sp2VWidth-1:0]      sp_crypt;
+  logic           [Sp2VWidth-1:0]      sp_dec_key_gen;
+  logic           [Sp2VWidth-1:0]      sp_state_we;
+  logic           [Sp2VWidth-1:0]      sp_sub_bytes_en;
+  logic           [Sp2VWidth-1:0]      sp_sub_bytes_out_req;
+  logic           [Sp2VWidth-1:0]      sp_sub_bytes_out_ack;
+  logic           [Sp2VWidth-1:0]      sp_key_full_we;
+  logic           [Sp2VWidth-1:0]      sp_key_dec_we;
+  logic           [Sp2VWidth-1:0]      sp_key_expand_en;
+  logic           [Sp2VWidth-1:0]      sp_key_expand_out_req;
+  logic           [Sp2VWidth-1:0]      sp_key_expand_out_ack;
+  logic           [Sp2VWidth-1:0]      sp_crypt_d;
+  logic           [Sp2VWidth-1:0]      sp_crypt_q;
+  logic           [Sp2VWidth-1:0]      sp_dec_key_gen_d;
+  logic           [Sp2VWidth-1:0]      sp_dec_key_gen_q;
+  
+  logic           [Sp2VWidth-1:0]      mr_alert;
+  logic           [Sp2VWidth-1:0]      mr_prng_update;
+  logic           [Sp2VWidth-1:0]      mr_prng_reseed_req;
+  logic           [Sp2VWidth-1:0]      mr_key_expand_clear;
+  logic           [Sp2VWidth-1:0]      mr_prng_reseed_d;
+  logic           [Sp2VWidth-1:0]      mr_key_clear_d;
+  logic           [Sp2VWidth-1:0]      mr_data_out_clear_d;
+  state_sel_e     [Sp2VWidth-1:0]      mr_state_sel;
+  add_rk_sel_e    [Sp2VWidth-1:0]      mr_add_rk_sel;
+  key_full_sel_e  [Sp2VWidth-1:0]      mr_key_full_sel;
+  key_dec_sel_e   [Sp2VWidth-1:0]      mr_key_dec_sel;
+  key_words_sel_e [Sp2VWidth-1:0]      mr_key_words_sel;
+  round_key_sel_e [Sp2VWidth-1:0]      mr_round_key_sel;
+  logic           [Sp2VWidth-1:0][3:0] mr_rnd_ctr;
+  
+  
+  
+  
+  assign sp_in_valid           = {in_valid};
+  assign sp_out_ready          = {out_ready};
+  assign sp_crypt              = {crypt};
+  assign sp_dec_key_gen        = {dec_key_gen};
+  assign sp_sub_bytes_out_req  = {sub_bytes_out_req};
+  assign sp_key_expand_out_req = {key_expand_out_req};
+  assign sp_crypt_q            = {crypt_q};
+  assign sp_dec_key_gen_q      = {dec_key_gen_q};
+  
+  
+  
+  
+  for (genvar i = 0; i < Sp2VWidth; i++) begin : gen_fsm
+    if (SP2V_LOGIC_HIGH[i] == 1'b1) begin : gen_fsm_p
+      aes_cipher_control_fsm_p #(
+        .SecMasking  ( SecMasking  ),
+        .SecSBoxImpl ( SecSBoxImpl )
+      ) u_aes_cipher_control_fsm_i (
+        .clk_i                 ( clk_i                    ),
+        .rst_ni                ( rst_ni                   ),
+        .in_valid_i            ( sp_in_valid[i]           ), 
+        .in_ready_o            ( sp_in_ready[i]           ), 
+        .out_valid_o           ( sp_out_valid[i]          ), 
+        .out_ready_i           ( sp_out_ready[i]          ), 
+        .cfg_valid_i           ( cfg_valid_i              ),
+        .op_i                  ( op_i                     ),
+        .key_len_i             ( key_len_i                ),
+        .crypt_i               ( sp_crypt[i]              ), 
+        .dec_key_gen_i         ( sp_dec_key_gen[i]        ), 
+        .prng_reseed_i         ( prng_reseed_i            ),
+        .key_clear_i           ( key_clear_i              ),
+        .data_out_clear_i      ( data_out_clear_i         ),
+        .mux_sel_err_i         ( mux_sel_err              ),
+        .sp_enc_err_i          ( sp_enc_err               ),
+        .rnd_ctr_err_i         ( rnd_ctr_err              ),
+        .op_err_i              ( op_err_i                 ),
+        .alert_fatal_i         ( alert_fatal_i            ),
+        .alert_o               ( mr_alert[i]              ), 
+        .prng_update_o         ( mr_prng_update[i]        ), 
+        .prng_reseed_req_o     ( mr_prng_reseed_req[i]    ), 
+        .prng_reseed_ack_i     ( prng_reseed_ack_i        ),
+        .state_sel_o           ( mr_state_sel[i]          ), 
+        .state_we_o            ( sp_state_we[i]           ), 
+        .sub_bytes_en_o        ( sp_sub_bytes_en[i]       ), 
+        .sub_bytes_out_req_i   ( sp_sub_bytes_out_req[i]  ), 
+        .sub_bytes_out_ack_o   ( sp_sub_bytes_out_ack[i]  ), 
+        .add_rk_sel_o          ( mr_add_rk_sel[i]         ), 
+        .key_full_sel_o        ( mr_key_full_sel[i]       ), 
+        .key_full_we_o         ( sp_key_full_we[i]        ), 
+        .key_dec_sel_o         ( mr_key_dec_sel[i]        ), 
+        .key_dec_we_o          ( sp_key_dec_we[i]         ), 
+        .key_expand_en_o       ( sp_key_expand_en[i]      ), 
+        .key_expand_out_req_i  ( sp_key_expand_out_req[i] ), 
+        .key_expand_out_ack_o  ( sp_key_expand_out_ack[i] ), 
+        .key_expand_clear_o    ( mr_key_expand_clear[i]   ), 
+        .rnd_ctr_o             ( mr_rnd_ctr[i]            ), 
+        .key_words_sel_o       ( mr_key_words_sel[i]      ), 
+        .round_key_sel_o       ( mr_round_key_sel[i]      ), 
+        .crypt_q_i             ( sp_crypt_q[i]            ), 
+        .crypt_d_o             ( sp_crypt_d[i]            ), 
+        .dec_key_gen_q_i       ( sp_dec_key_gen_q[i]      ), 
+        .dec_key_gen_d_o       ( sp_dec_key_gen_d[i]      ), 
+        .prng_reseed_q_i       ( prng_reseed_q            ),
+        .prng_reseed_d_o       ( mr_prng_reseed_d[i]      ), 
+        .key_clear_q_i         ( key_clear_q              ),
+        .key_clear_d_o         ( mr_key_clear_d[i]        ), 
+        .data_out_clear_q_i    ( data_out_clear_q         ),
+        .data_out_clear_d_o    ( mr_data_out_clear_d[i]   )  
+      );
+    end else begin : gen_fsm_n
+      aes_cipher_control_fsm_n #(
+        .SecMasking  ( SecMasking  ),
+        .SecSBoxImpl ( SecSBoxImpl )
+      ) u_aes_cipher_control_fsm_i (
+        .clk_i                 ( clk_i                    ),
+        .rst_ni                ( rst_ni                   ),
+        .in_valid_ni           ( sp_in_valid[i]           ), 
+        .in_ready_no           ( sp_in_ready[i]           ), 
+        .out_valid_no          ( sp_out_valid[i]          ), 
+        .out_ready_ni          ( sp_out_ready[i]          ), 
+        .cfg_valid_i           ( cfg_valid_i              ),
+        .op_i                  ( op_i                     ),
+        .key_len_i             ( key_len_i                ),
+        .crypt_ni              ( sp_crypt[i]              ), 
+        .dec_key_gen_ni        ( sp_dec_key_gen[i]        ), 
+        .prng_reseed_i         ( prng_reseed_i            ),
+        .key_clear_i           ( key_clear_i              ),
+        .data_out_clear_i      ( data_out_clear_i         ),
+        .mux_sel_err_i         ( mux_sel_err              ),
+        .sp_enc_err_i          ( sp_enc_err               ),
+        .rnd_ctr_err_i         ( rnd_ctr_err              ),
+        .op_err_i              ( op_err_i                 ),
+        .alert_fatal_i         ( alert_fatal_i            ),
+        .alert_o               ( mr_alert[i]              ), 
+        .prng_update_o         ( mr_prng_update[i]        ), 
+        .prng_reseed_req_o     ( mr_prng_reseed_req[i]    ), 
+        .prng_reseed_ack_i     ( prng_reseed_ack_i        ),
+        .state_sel_o           ( mr_state_sel[i]          ), 
+        .state_we_no           ( sp_state_we[i]           ), 
+        .sub_bytes_en_no       ( sp_sub_bytes_en[i]       ), 
+        .sub_bytes_out_req_ni  ( sp_sub_bytes_out_req[i]  ), 
+        .sub_bytes_out_ack_no  ( sp_sub_bytes_out_ack[i]  ), 
+        .add_rk_sel_o          ( mr_add_rk_sel[i]         ), 
+        .key_full_sel_o        ( mr_key_full_sel[i]       ), 
+        .key_full_we_no        ( sp_key_full_we[i]        ), 
+        .key_dec_sel_o         ( mr_key_dec_sel[i]        ), 
+        .key_dec_we_no         ( sp_key_dec_we[i]         ), 
+        .key_expand_en_no      ( sp_key_expand_en[i]      ), 
+        .key_expand_out_req_ni ( sp_key_expand_out_req[i] ), 
+        .key_expand_out_ack_no ( sp_key_expand_out_ack[i] ), 
+        .key_expand_clear_o    ( mr_key_expand_clear[i]   ), 
+        .rnd_ctr_o             ( mr_rnd_ctr[i]            ), 
+        .key_words_sel_o       ( mr_key_words_sel[i]      ), 
+        .round_key_sel_o       ( mr_round_key_sel[i]      ), 
+        .crypt_q_ni            ( sp_crypt_q[i]            ), 
+        .crypt_d_no            ( sp_crypt_d[i]            ), 
+        .dec_key_gen_q_ni      ( sp_dec_key_gen_q[i]      ), 
+        .dec_key_gen_d_no      ( sp_dec_key_gen_d[i]      ), 
+        .prng_reseed_q_i       ( prng_reseed_q            ),
+        .prng_reseed_d_o       ( mr_prng_reseed_d[i]      ), 
+        .key_clear_q_i         ( key_clear_q              ),
+        .key_clear_d_o         ( mr_key_clear_d[i]        ), 
+        .data_out_clear_q_i    ( data_out_clear_q         ),
+        .data_out_clear_d_o    ( mr_data_out_clear_d[i]   )  
+      );
+    end
+  end
+  
+  assign in_ready_o           = sp2v_e'(sp_in_ready);
+  assign out_valid_o          = sp2v_e'(sp_out_valid);
+  assign state_we_o           = sp2v_e'(sp_state_we);
+  assign sub_bytes_en_o       = sp2v_e'(sp_sub_bytes_en);
+  assign sub_bytes_out_ack_o  = sp2v_e'(sp_sub_bytes_out_ack);
+  assign key_full_we_o        = sp2v_e'(sp_key_full_we);
+  assign key_dec_we_o         = sp2v_e'(sp_key_dec_we);
+  assign key_expand_en_o      = sp2v_e'(sp_key_expand_en);
+  assign key_expand_out_ack_o = sp2v_e'(sp_key_expand_out_ack);
+  assign crypt_d              = sp2v_e'(sp_crypt_d);
+  assign dec_key_gen_d        = sp2v_e'(sp_dec_key_gen_d);
+  
+  
+  assign alert_o            = |mr_alert;
+  assign prng_update_o      = |mr_prng_update;
+  assign prng_reseed_req_o  = |mr_prng_reseed_req;
+  assign key_expand_clear_o = |mr_key_expand_clear;
+  
+  
+  assign prng_reseed_d      = &mr_prng_reseed_d;
+  assign key_clear_d        = &mr_key_clear_d;
+  assign data_out_clear_d   = &mr_data_out_clear_d;
+  
+  
+  
+  
+  always_comb begin : combine_sparse_signals
+    state_sel_o     = state_sel_e'({StateSelWidth{1'b0}});
+    add_rk_sel_o    = add_rk_sel_e'({AddRKSelWidth{1'b0}});
+    key_full_sel_o  = key_full_sel_e'({KeyFullSelWidth{1'b0}});
+    key_dec_sel_o   = key_dec_sel_e'({KeyDecSelWidth{1'b0}});
+    key_words_sel_o = key_words_sel_e'({KeyWordsSelWidth{1'b0}});
+    round_key_sel_o = round_key_sel_e'({RoundKeySelWidth{1'b0}});
+    mr_err          = 1'b0;
+    for (int i = 0; i < Sp2VWidth; i++) begin
+      state_sel_o     = state_sel_e'({state_sel_o}         | {mr_state_sel[i]});
+      add_rk_sel_o    = add_rk_sel_e'({add_rk_sel_o}       | {mr_add_rk_sel[i]});
+      key_full_sel_o  = key_full_sel_e'({key_full_sel_o}   | {mr_key_full_sel[i]});
+      key_dec_sel_o   = key_dec_sel_e'({key_dec_sel_o}     | {mr_key_dec_sel[i]});
+      key_words_sel_o = key_words_sel_e'({key_words_sel_o} | {mr_key_words_sel[i]});
+      round_key_sel_o = round_key_sel_e'({round_key_sel_o} | {mr_round_key_sel[i]});
+    end
+    for (int i = 0; i < Sp2VWidth; i++) begin
+      if (state_sel_o     != mr_state_sel[i]     ||
+          add_rk_sel_o    != mr_add_rk_sel[i]    ||
+          key_full_sel_o  != mr_key_full_sel[i]  ||
+          key_dec_sel_o   != mr_key_dec_sel[i]   ||
+          key_words_sel_o != mr_key_words_sel[i] ||
+          round_key_sel_o != mr_round_key_sel[i]) begin
+        mr_err = 1'b1;
+      end
+    end
+  end
+  
+  assign mux_sel_err = mux_sel_err_i | mr_err;
+  
+  
+  always_comb begin : combine_counter_signals
+    rnd_ctr     = '0;
+    rnd_ctr_err = 1'b0;
+    for (int i = 0; i < Sp2VWidth; i++) begin
+      rnd_ctr |= mr_rnd_ctr[i];
+    end
+    for (int i = 0; i < Sp2VWidth; i++) begin
+      if (rnd_ctr != mr_rnd_ctr[i]) begin
+        rnd_ctr_err = 1'b1;
+      end
+    end
+  end
+  always_ff @(posedge clk_i or negedge rst_ni) begin : reg_fsm
+    if (!rst_ni) begin
+      prng_reseed_q      <= 1'b0;
+      key_clear_q        <= 1'b0;
+      data_out_clear_q   <= 1'b0;
+    end else begin
+      prng_reseed_q      <= prng_reseed_d;
+      key_clear_q        <= key_clear_d;
+      data_out_clear_q   <= data_out_clear_d;
+    end
+  end
+  
+  assign key_expand_op_o    = (dec_key_gen_d == SP2V_HIGH  ||
+                               dec_key_gen_q == SP2V_HIGH) || CiphOpFwdOnly ? CIPH_FWD : op_i;
+  assign key_expand_round_o = rnd_ctr;
+  
+  assign crypt_o          = crypt_q;
+  assign dec_key_gen_o    = dec_key_gen_q;
+  assign prng_reseed_o    = prng_reseed_q;
+  assign key_clear_o      = key_clear_q;
+  assign data_out_clear_o = data_out_clear_q;
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  logic [Sp2VWidth-1:0] crypt_q_raw;
+  prim_flop #(
+    .Width      ( Sp2VWidth            ),
+    .ResetValue ( Sp2VWidth'(SP2V_LOW) )
+  ) u_crypt_regs (
+    .clk_i  ( clk_i       ),
+    .rst_ni ( rst_ni      ),
+    .d_i    ( crypt_d     ),
+    .q_o    ( crypt_q_raw )
+  );
+  logic [Sp2VWidth-1:0] dec_key_gen_q_raw;
+  prim_flop #(
+    .Width      ( Sp2VWidth            ),
+    .ResetValue ( Sp2VWidth'(SP2V_LOW) )
+  ) u_dec_key_gen_regs (
+    .clk_i  ( clk_i             ),
+    .rst_ni ( rst_ni            ),
+    .d_i    ( dec_key_gen_d     ),
+    .q_o    ( dec_key_gen_q_raw )
+  );
+  
+  localparam int unsigned NumSp2VSig = 8;
+  sp2v_e [NumSp2VSig-1:0]                sp2v_sig;
+  sp2v_e [NumSp2VSig-1:0]                sp2v_sig_chk;
+  logic  [NumSp2VSig-1:0][Sp2VWidth-1:0] sp2v_sig_chk_raw;
+  logic  [NumSp2VSig-1:0]                sp2v_sig_err;
+  assign sp2v_sig[0] = in_valid_i;
+  assign sp2v_sig[1] = out_ready_i;
+  assign sp2v_sig[2] = crypt_i;
+  assign sp2v_sig[3] = dec_key_gen_i;
+  assign sp2v_sig[4] = sp2v_e'(crypt_q_raw);
+  assign sp2v_sig[5] = sp2v_e'(dec_key_gen_q_raw);
+  assign sp2v_sig[6] = sub_bytes_out_req_i;
+  assign sp2v_sig[7] = key_expand_out_req_i;
+  
+  
+  localparam bit [NumSp2VSig-1:0] Sp2VEnSecBuf = 8'b1100_0000;
+  
+  for (genvar i = 0; i < NumSp2VSig; i++) begin : gen_sel_buf_chk
+    aes_sel_buf_chk #(
+      .Num      ( Sp2VNum         ),
+      .Width    ( Sp2VWidth       ),
+      .EnSecBuf ( Sp2VEnSecBuf[i] )
+    ) u_aes_sp2v_sig_buf_chk_i (
+      .clk_i  ( clk_i               ),
+      .rst_ni ( rst_ni              ),
+      .sel_i  ( sp2v_sig[i]         ),
+      .sel_o  ( sp2v_sig_chk_raw[i] ),
+      .err_o  ( sp2v_sig_err[i]     )
+    );
+    assign sp2v_sig_chk[i] = sp2v_e'(sp2v_sig_chk_raw[i]);
+  end
+  assign in_valid           = sp2v_sig_chk[0];
+  assign out_ready          = sp2v_sig_chk[1];
+  assign crypt              = sp2v_sig_chk[2];
+  assign dec_key_gen        = sp2v_sig_chk[3];
+  assign crypt_q            = sp2v_sig_chk[4];
+  assign dec_key_gen_q      = sp2v_sig_chk[5];
+  assign sub_bytes_out_req  = sp2v_sig_chk[6];
+  assign key_expand_out_req = sp2v_sig_chk[7];
+  
+  
+  
+  assign sp_enc_err = |sp2v_sig_err | sp_enc_err_i;
+  
+  
+  
+  
+  `ASSERT(AesCiphOpValid, cfg_valid_i |-> op_i inside {
+      CIPH_FWD,
+      CIPH_INV
+      })
+endmodule
+
+`ifndef PRIM_ASSERT_SV
+`define PRIM_ASSERT_SV
+`define ASSERT_DEFAULT_CLK clk_i
+`define ASSERT_DEFAULT_RST !rst_ni
+`define PRIM_STRINGIFY(__x) `"__x`"
+`define ASSERT_ERROR(__name)                                                             \
+`ifdef UVM                                                                               \
+  uvm_pkg::uvm_report_error("ASSERT FAILED", `PRIM_STRINGIFY(__name), uvm_pkg::UVM_NONE, \
+                            `__FILE__, `__LINE__, "", 1);                                \
+`else                                                                                    \
+  $error("%0t: (%0s:%0d) [%m] [ASSERT FAILED] %0s", $time, `__FILE__, `__LINE__,         \
+         `PRIM_STRINGIFY(__name));                                                       \
+`endif
+`define ASSERT_STATIC_LINT_ERROR(__name, __prop)     \
+  localparam int __name = (__prop) ? 1 : 2;          \
+  always_comb begin                                  \
+    logic unused_assert_static_lint_error;           \
+    unused_assert_static_lint_error = __name'(1'b1); \
+  end
+`define ASSERT_STATIC_IN_PACKAGE(__name, __prop)              \
+  function automatic bit assert_static_in_package_``__name(); \
+    bit unused_bit [((__prop) ? 1 : -1)];                     \
+    unused_bit = '{default: 1'b0};                            \
+    return unused_bit[0];                                     \
+  endfunction
+`ifdef VERILATOR
+ `include "prim_assert_dummy_macros.svh"`elsif SYNTHESIS
+ `include "prim_assert_dummy_macros.svh"`elsif YOSYS
+ `include "prim_assert_yosys_macros.svh"
+ `define INC_ASSERT`else
+ 
+`define ASSERT_I(__name, __prop) \
+  __name: assert (__prop)        \
+    else begin                   \
+      `ASSERT_ERROR(__name)      \
+    end
+`define ASSERT_INIT(__name, __prop)                                                  \
+`ifdef FPV_ON                                                                        \
+  if (!(__prop)) $fatal(2, "Fatal static assertion [%s]: (%s) is not true.",         \
+                        (__name), (__prop));                                         \
+`else                                                                                \
+  initial begin                                                                      \
+    __name: assert (__prop)                                                          \
+      else begin                                                                     \
+        `ASSERT_ERROR(__name)                                                        \
+      end                                                                            \
+  end                                                                                \
+`endif
+`define ASSERT_INIT_NET(__name, __prop)                                                   \
+  initial begin                                                                      \
+    
+    
+    
+    #1ps;                                                                            \
+    __name: assert (__prop)                                                          \
+      else begin                                                                     \
+        `ASSERT_ERROR(__name)                                                        \
+      end                                                                            \
+  end                                                                                \
+`define ASSERT_FINAL(__name, __prop)                                         \
+`ifndef FPV_ON                                                               \
+  final begin                                                                \
+    __name: assert (__prop || $test$plusargs("disable_assert_final_checks")) \
+      else begin                                                             \
+        `ASSERT_ERROR(__name)                                                \
+      end                                                                    \
+  end                                                                        \
+`endif
+`define ASSERT_AT_RESET(__name, __prop, __rst = `ASSERT_DEFAULT_RST)          \
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+`ifndef FPV_ON                                                                \
+  __name: assert property (@(posedge __rst) $isunknown(__rst) || (__prop))    \
+`else                                                                         \
+  __name: assert property (@(posedge __rst) (__prop))                         \
+`endif                                                                        \
+    else begin                                                                \
+      `ASSERT_ERROR(__name)                                                   \
+    end
+`define ASSERT_AT_RESET_AND_FINAL(__name, __prop, __rst = `ASSERT_DEFAULT_RST) \
+    `ASSERT_AT_RESET(AtReset_``__name``, __prop, __rst)                        \
+    `ASSERT_FINAL(Final_``__name``, __prop)
+`define ASSERT(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: assert property (@(posedge __clk) disable iff ((__rst) !== '0) (__prop))       \
+    else begin                                                                           \
+      `ASSERT_ERROR(__name)                                                              \
+    end
+`define ASSERT_NEVER(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: assert property (@(posedge __clk) disable iff ((__rst) !== '0) not (__prop))         \
+    else begin                                                                                 \
+      `ASSERT_ERROR(__name)                                                                    \
+    end
+`define ASSERT_KNOWN(__name, __sig, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifndef FPV_ON                                                                                \
+  `ASSERT(__name, !$isunknown(__sig), __clk, __rst)                                           \
+`endif
+`define COVER(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: cover property (@(posedge __clk) disable iff ((__rst) !== '0) (__prop));
+`define ASSUME(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: assume property (@(posedge __clk) disable iff ((__rst) !== '0) (__prop))       \
+    else begin                                                                           \
+      `ASSERT_ERROR(__name)                                                              \
+    end
+`define ASSUME_I(__name, __prop) \
+  __name: assume (__prop)        \
+    else begin                   \
+      `ASSERT_ERROR(__name)      \
+    end
+ `define INC_ASSERT
+`endif
+`define ASSERT_PULSE(__name, __sig, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  `ASSERT(__name, $rose(__sig) |=> !(__sig), __clk, __rst)
+`define ASSERT_IF(__name, __prop, __enable, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  `ASSERT(__name, (__enable) |-> (__prop), __clk, __rst)
+`define ASSERT_KNOWN_IF(__name, __sig, __enable, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifndef FPV_ON                                                                                             \
+  `ASSERT_KNOWN(__name``KnownEnable, __enable, __clk, __rst)                                               \
+  `ASSERT_IF(__name, !$isunknown(__sig), __enable, __clk, __rst)                                           \
+`endif
+`define ASSUME_FPV(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifdef FPV_ON                                                                                \
+   `ASSUME(__name, __prop, __clk, __rst)                                                     \
+`endif
+`define ASSUME_I_FPV(__name, __prop) \
+`ifdef FPV_ON                        \
+   `ASSUME_I(__name, __prop)         \
+`endif
+`define COVER_FPV(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifdef FPV_ON                                                                               \
+   `COVER(__name, __prop, __clk, __rst)                                                     \
+`endif
+`define ASSERT_FPV_LINEAR_FSM(__name, __state, __type, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  `ifdef INC_ASSERT                                                                                              \
+     bit __name``_cond;                                                                                          \
+     always_ff @(posedge __clk or posedge __rst) begin                                                           \
+       if (__rst) begin                                                                                          \
+         __name``_cond <= 0;                                                                                     \
+       end else begin                                                                                            \
+         __name``_cond <= 1;                                                                                     \
+       end                                                                                                       \
+     end                                                                                                         \
+     property __name``_p;                                                                                        \
+       __type initial_state;                                                                                     \
+       (!$stable(__state) & __name``_cond, initial_state = $past(__state)) |->                                   \
+           (__state != initial_state) until !(__name``_cond);                                                    \
+     endproperty                                                                                                 \
+   `ASSERT(__name, __name``_p, __clk, 0)                                                                         \
+  `endif
+`ifndef PRIM_ASSERT_SEC_CM_SVH
+`define PRIM_ASSERT_SEC_CM_SVH
+`define _SEC_CM_ALERT_MAX_CYC 30
+`define ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, ERR_NAME_, CLK_, RST_) \
+  `ASSERT(FpvSecCm``NAME_``,                                                                    \
+          $rose(HIER_.ERR_NAME_) && !(GATE_) |-> ##[0:MAX_CYCLES_] (ERR_),                      \
+          CLK_, RST_)                                                                           \
+  `ifdef INC_ASSERT                                                                             \
+    assign HIER_.unused_assert_connected = 1'b1;                                                \
+  `endif
+`define ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, ERR_NAME_)    \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, (ALERT_.alert_p), GATE_, MAX_CYCLES_, ERR_NAME_, \
+                            `ASSERT_DEFAULT_CLK, `ASSERT_DEFAULT_RST)                      \
+  `ASSUME_FPV(``NAME_``TriggerAfterAlertInit_S,                                            \
+              $stable(rst_ni) == 0 |-> HIER_.ERR_NAME_ == 0 [*10])
+`define ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_IN_, GATE_, MAX_CYCLES_, ERR_NAME_) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ALERT_IN_, GATE_, MAX_CYCLES_, ERR_NAME_,           \
+                            `ASSERT_DEFAULT_CLK, `ASSERT_DEFAULT_RST)
+`define ASSERT_PRIM_COUNT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_DOUBLE_LFSR_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_FSM_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, unused_err_o)
+`define ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_REG_WE_ONEHOT_ERROR_TRIGGER_ALERT(NAME_, REG_TOP_HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT(NAME_, \
+    REG_TOP_HIER_.u_prim_reg_we_check.u_prim_onehot_check, ALERT_, GATE_, MAX_CYCLES_)
+`define ASSERT_PRIM_FIFO_SYNC_SINGLETON_ERROR_TRIGGER_ALERT(NAME, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_COUNT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_DOUBLE_LFSR_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_FSM_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, unused_err_o)
+`define ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_REG_WE_ONEHOT_ERROR_TRIGGER_ALERT_IN(NAME_, REG_TOP_HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT_IN(NAME_, \
+    REG_TOP_HIER_.u_prim_reg_we_check.u_prim_onehot_check, ALERT_, GATE_, MAX_CYCLES_)
+`define ASSERT_PRIM_FIFO_SYNC_SINGLETON_ERROR_TRIGGER_ALERT_IN(NAME, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_FSM_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = 2, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, unused_err_o, CLK_, RST_)
+`define ASSERT_PRIM_COUNT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = 2, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, err_o, CLK_, RST_)
+`define ASSERT_PRIM_DOUBLE_LFSR_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = 2, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, err_o, CLK_, RST_)
+`define ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, err_o, CLK_, RST_)
+`define ASSERT_PRIM_REG_WE_ONEHOT_ERROR_TRIGGER_ERR(NAME_, REG_TOP_HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ERR(NAME_, \
+    REG_TOP_HIER_.u_prim_reg_we_check.u_prim_onehot_check, ERR_, GATE_, MAX_CYCLES_, CLK_, RST_)
+`endif 
+`ifndef PRIM_FLOP_MACROS_SV
+`define PRIM_FLOP_MACROS_SV
+`define PRIM_FLOP_CLK clk_i
+`define PRIM_FLOP_RST rst_ni
+`define PRIM_FLOP_RESVAL '0
+`define PRIM_FLOP_A(__d, __q, __resval = `PRIM_FLOP_RESVAL, __clk = `PRIM_FLOP_CLK, __rst_n = `PRIM_FLOP_RST) \
+  always_ff @(posedge __clk or negedge __rst_n) begin \
+    if (!__rst_n) begin                               \
+      __q <= __resval;                                \
+    end else begin                                    \
+      __q <= __d;                                     \
+    end                                               \
+  end
+`define PRIM_FLOP_SPARSE_FSM(__name, __d, __q, __type, __resval = `PRIM_FLOP_RESVAL, __clk = `PRIM_FLOP_CLK, __rst_n = `PRIM_FLOP_RST, __alert_trigger_sva_en = 1) \
+  `ifdef SIMULATION                                   \
+    prim_sparse_fsm_flop #(                           \
+      .StateEnumT(__type),                            \
+      .Width($bits(__type)),                          \
+      .ResetValue($bits(__type)'(__resval)),          \
+      .EnableAlertTriggerSVA(__alert_trigger_sva_en), \
+      .CustomForceName(`PRIM_STRINGIFY(__q))          \
+    ) __name (                                        \
+      .clk_i   ( __clk   ),                           \
+      .rst_ni  ( __rst_n ),                           \
+      .state_i ( __d     ),                           \
+      .state_o (         )                            \
+    );                                                \
+    `PRIM_FLOP_A(__d, __q, __resval, __clk, __rst_n)  \
+    `ASSERT(``__name``_A, __q === ``__name``.state_o) \
+  `else                                               \
+    prim_sparse_fsm_flop #(                           \
+      .StateEnumT(__type),                            \
+      .Width($bits(__type)),                          \
+      .ResetValue($bits(__type)'(__resval)),          \
+      .EnableAlertTriggerSVA(__alert_trigger_sva_en)  \
+    ) __name (                                        \
+      .clk_i   ( __clk   ),                           \
+      .rst_ni  ( __rst_n ),                           \
+      .state_i ( __d     ),                           \
+      .state_o ( __q     )                            \
+    );                                                \
+  `endif
+`endif 
+`endif 
+module aes_cipher_control_fsm import aes_pkg::*;
+#(
+  parameter bit         SecMasking  = 0,
+  parameter sbox_impl_e SecSBoxImpl = SBoxImplDom
+) (
+  input  logic             clk_i,
+  input  logic             rst_ni,
+  
+  input  logic             in_valid_i,           
+  output logic             in_ready_o,           
+  
+  output logic             out_valid_o,          
+  input  logic             out_ready_i,          
+  
+  input  logic             cfg_valid_i,          
+  input  ciph_op_e         op_i,
+  input  key_len_e         key_len_i,
+  input  logic             crypt_i,              
+  input  logic             dec_key_gen_i,        
+  input  logic             prng_reseed_i,
+  input  logic             key_clear_i,
+  input  logic             data_out_clear_i,
+  input  logic             mux_sel_err_i,
+  input  logic             sp_enc_err_i,
+  input  logic             rnd_ctr_err_i,
+  input  logic             op_err_i,
+  input  logic             alert_fatal_i,
+  output logic             alert_o,
+  
+  output logic             prng_update_o,
+  output logic             prng_reseed_req_o,
+  input  logic             prng_reseed_ack_i,
+  
+  output state_sel_e       state_sel_o,
+  output logic             state_we_o,           
+  output logic             sub_bytes_en_o,       
+  input  logic             sub_bytes_out_req_i,  
+  output logic             sub_bytes_out_ack_o,  
+  output add_rk_sel_e      add_rk_sel_o,
+  
+  output key_full_sel_e    key_full_sel_o,
+  output logic             key_full_we_o,        
+  output key_dec_sel_e     key_dec_sel_o,
+  output logic             key_dec_we_o,         
+  output logic             key_expand_en_o,      
+  input  logic             key_expand_out_req_i, 
+  output logic             key_expand_out_ack_o, 
+  output logic             key_expand_clear_o,
+  output logic [3:0]       rnd_ctr_o,
+  output key_words_sel_e   key_words_sel_o,
+  output round_key_sel_e   round_key_sel_o,
+  
+  input  logic             crypt_q_i,            
+  output logic             crypt_d_o,            
+  input  logic             dec_key_gen_q_i,      
+  output logic             dec_key_gen_d_o,      
+  input  logic             prng_reseed_q_i,
+  output logic             prng_reseed_d_o,
+  input  logic             key_clear_q_i,
+  output logic             key_clear_d_o,
+  input  logic             data_out_clear_q_i,
+  output logic             data_out_clear_d_o
+);
+  
+  logic unused_cfg_valid;
+  assign unused_cfg_valid = cfg_valid_i;
+  
+  if (!SecMasking) begin : gen_unused_prng_reseed
+    logic unused_prng_reseed;
+    assign unused_prng_reseed = prng_reseed_i;
+  end
+  
+  aes_cipher_ctrl_e aes_cipher_ctrl_ns, aes_cipher_ctrl_cs;
+  logic             advance;
+  logic       [2:0] cyc_ctr_d, cyc_ctr_q;
+  logic             cyc_ctr_expr;
+  logic             prng_reseed_done_d, prng_reseed_done_q;
+  logic       [3:0] rnd_ctr_d, rnd_ctr_q;
+  logic       [3:0] num_rounds_d, num_rounds_q;
+  logic       [3:0] num_rounds_regular;
+  
+  assign num_rounds_regular = num_rounds_q - 4'd1;
+  
+  always_comb begin : aes_cipher_ctrl_fsm
+    
+    in_ready_o           = 1'b0;
+    out_valid_o          = 1'b0;
+    
+    prng_update_o        = 1'b0;
+    prng_reseed_req_o    = 1'b0;
+    
+    state_sel_o          = STATE_ROUND;
+    state_we_o           = 1'b0;
+    add_rk_sel_o         = ADD_RK_ROUND;
+    sub_bytes_en_o       = 1'b0;
+    sub_bytes_out_ack_o  = 1'b0;
+    
+    key_full_sel_o       = KEY_FULL_ROUND;
+    key_full_we_o        = 1'b0;
+    key_dec_sel_o        = KEY_DEC_EXPAND;
+    key_dec_we_o         = 1'b0;
+    key_expand_en_o      = 1'b0;
+    key_expand_out_ack_o = 1'b0;
+    key_expand_clear_o   = 1'b0;
+    key_words_sel_o      = KEY_WORDS_ZERO;
+    round_key_sel_o      = ROUND_KEY_DIRECT;
+    
+    aes_cipher_ctrl_ns   = aes_cipher_ctrl_cs;
+    num_rounds_d         = num_rounds_q;
+    rnd_ctr_d            = rnd_ctr_q;
+    crypt_d_o            = crypt_q_i;
+    dec_key_gen_d_o      = dec_key_gen_q_i;
+    prng_reseed_d_o      = prng_reseed_q_i;
+    key_clear_d_o        = key_clear_q_i;
+    data_out_clear_d_o   = data_out_clear_q_i;
+    prng_reseed_done_d   = prng_reseed_done_q | prng_reseed_ack_i;
+    advance              = 1'b0;
+    cyc_ctr_d            = (SecSBoxImpl == SBoxImplDom) ? cyc_ctr_q + 3'd1 : 3'd0;
+    
+    alert_o              = 1'b0;
+    unique case (aes_cipher_ctrl_cs)
+      CIPHER_CTRL_IDLE: begin
+        cyc_ctr_d = 3'd0;
+        
+        in_ready_o = 1'b1;
+        if (in_valid_i) begin
+          if (SecMasking && prng_reseed_i && !dec_key_gen_i && !crypt_i) begin
+            
+            
+            prng_reseed_d_o    = 1'b1;
+            prng_reseed_done_d = 1'b0;
+            aes_cipher_ctrl_ns = CIPHER_CTRL_PRNG_RESEED;
+          end else if (key_clear_i || data_out_clear_i) begin
+            
+            
+            key_clear_d_o      = key_clear_i;
+            data_out_clear_d_o = data_out_clear_i;
+            
+            aes_cipher_ctrl_ns = data_out_clear_i ? CIPHER_CTRL_CLEAR_S : CIPHER_CTRL_CLEAR_KD;
+          end else if (dec_key_gen_i || crypt_i) begin
+            
+            crypt_d_o       = ~dec_key_gen_i & crypt_i;
+            dec_key_gen_d_o =  dec_key_gen_i;
+            
+            prng_reseed_d_o = SecMasking & prng_reseed_i;
+            
+            state_sel_o = dec_key_gen_i ? STATE_CLEAR : STATE_INIT;
+            state_we_o  = 1'b1;
+            
+            
+            prng_update_o = SecMasking;
+            
+            key_expand_clear_o = 1'b1;
+            
+            key_full_sel_o = dec_key_gen_i ? KEY_FULL_ENC_INIT :
+                        (op_i == CIPH_FWD) ? KEY_FULL_ENC_INIT :
+                        (op_i == CIPH_INV) ? KEY_FULL_DEC_INIT :
+                                             KEY_FULL_ENC_INIT;
+            key_full_we_o  = 1'b1;
+            
+            num_rounds_d = (key_len_i == AES_128) ? 4'd10 :
+                           (key_len_i == AES_192) ? 4'd12 :
+                                                    4'd14;
+            rnd_ctr_d          = '0;
+            aes_cipher_ctrl_ns = CIPHER_CTRL_INIT;
+          end else begin
+            
+            
+            aes_cipher_ctrl_ns = CIPHER_CTRL_ERROR;
+          end
+        end
+      end
+      CIPHER_CTRL_INIT: begin
+        
+        add_rk_sel_o = ADD_RK_INIT;
+        
+        key_words_sel_o = (dec_key_gen_q_i)            ? KEY_WORDS_ZERO :
+            (key_len_i == AES_128)                     ? KEY_WORDS_0123 :
+            (key_len_i == AES_192 && op_i == CIPH_FWD) ? KEY_WORDS_0123 :
+            (key_len_i == AES_192 && op_i == CIPH_INV) ? KEY_WORDS_2345 :
+            (key_len_i == AES_256 && op_i == CIPH_FWD) ? KEY_WORDS_0123 :
+            (key_len_i == AES_256 && op_i == CIPH_INV) ? KEY_WORDS_4567 : KEY_WORDS_ZERO;
+        
+        prng_reseed_done_d = 1'b0;
+        
+        
+        if (key_len_i != AES_256) begin
+          
+          
+          
+          
+          
+          advance         = key_expand_out_req_i & cyc_ctr_expr;
+          prng_update_o   = SecMasking;
+          key_expand_en_o = 1'b1;
+          if (advance) begin
+            key_expand_out_ack_o = 1'b1;
+            state_we_o           = ~dec_key_gen_q_i;
+            key_full_we_o        = 1'b1;
+            rnd_ctr_d            = rnd_ctr_q + 4'b0001;
+            cyc_ctr_d            = 3'd0;
+            aes_cipher_ctrl_ns   = CIPHER_CTRL_ROUND;
+          end
+        end else begin
+          prng_update_o      = SecMasking;
+          state_we_o         = ~dec_key_gen_q_i;
+          rnd_ctr_d          = rnd_ctr_q + 4'b0001;
+          cyc_ctr_d          = 3'd0;
+          aes_cipher_ctrl_ns = CIPHER_CTRL_ROUND;
+        end
+      end
+      CIPHER_CTRL_ROUND: begin
+        
+        
+        key_words_sel_o = (dec_key_gen_q_i)            ? KEY_WORDS_ZERO :
+            (key_len_i == AES_128)                     ? KEY_WORDS_0123 :
+            (key_len_i == AES_192 && op_i == CIPH_FWD) ? KEY_WORDS_2345 :
+            (key_len_i == AES_192 && op_i == CIPH_INV) ? KEY_WORDS_0123 :
+            (key_len_i == AES_256 && op_i == CIPH_FWD) ? KEY_WORDS_4567 :
+            (key_len_i == AES_256 && op_i == CIPH_INV) ? KEY_WORDS_0123 : KEY_WORDS_ZERO;
+        
+        prng_reseed_req_o = SecMasking & prng_reseed_q_i & ~prng_reseed_done_q;
+        
+        round_key_sel_o = (op_i == CIPH_FWD) ? ROUND_KEY_DIRECT :
+                          (op_i == CIPH_INV) ? ROUND_KEY_MIXED  : ROUND_KEY_DIRECT;
+        
+        
+        
+        
+        
+        advance = key_expand_out_req_i & cyc_ctr_expr & (dec_key_gen_q_i | sub_bytes_out_req_i);
+        prng_update_o   = SecMasking;
+        sub_bytes_en_o  = ~dec_key_gen_q_i;
+        key_expand_en_o = 1'b1;
+        if (advance) begin
+          sub_bytes_out_ack_o  = ~dec_key_gen_q_i;
+          key_expand_out_ack_o = 1'b1;
+          state_we_o    = ~dec_key_gen_q_i;
+          key_full_we_o = 1'b1;
+          
+          rnd_ctr_d     = rnd_ctr_q + 4'b0001;
+          cyc_ctr_d     = 3'd0;
+          
+          if (rnd_ctr_q >= num_rounds_regular) begin
+            aes_cipher_ctrl_ns = CIPHER_CTRL_FINISH;
+            if (dec_key_gen_q_i) begin
+              
+              key_dec_we_o = 1'b1;
+              
+              
+              
+              out_valid_o = SecMasking ? (prng_reseed_q_i ? prng_reseed_done_q : 1'b1) : 1'b1;
+              if (out_valid_o && out_ready_i) begin
+                
+                dec_key_gen_d_o    = 1'b0;
+                prng_reseed_d_o    = 1'b0;
+                aes_cipher_ctrl_ns = CIPHER_CTRL_IDLE;
+              end
+            end
+          end 
+        end 
+      end
+      CIPHER_CTRL_FINISH: begin
+        
+        
+        key_words_sel_o = (dec_key_gen_q_i)            ? KEY_WORDS_ZERO :
+            (key_len_i == AES_128)                     ? KEY_WORDS_0123 :
+            (key_len_i == AES_192 && op_i == CIPH_FWD) ? KEY_WORDS_2345 :
+            (key_len_i == AES_192 && op_i == CIPH_INV) ? KEY_WORDS_0123 :
+            (key_len_i == AES_256 && op_i == CIPH_FWD) ? KEY_WORDS_4567 :
+            (key_len_i == AES_256 && op_i == CIPH_INV) ? KEY_WORDS_0123 : KEY_WORDS_ZERO;
+        
+        add_rk_sel_o = ADD_RK_FINAL;
+        
+        prng_reseed_req_o = SecMasking & prng_reseed_q_i & ~prng_reseed_done_q;
+        
+        
+        
+        state_sel_o = STATE_CLEAR;
+        
+        
+        
+        
+        
+        
+        
+        
+        advance        = (sub_bytes_out_req_i & cyc_ctr_expr) | dec_key_gen_q_i;
+        sub_bytes_en_o = ~dec_key_gen_q_i;
+        out_valid_o    = (mux_sel_err_i || sp_enc_err_i || op_err_i) ? 1'b0         :
+            SecMasking ? (prng_reseed_q_i ? prng_reseed_done_q & advance : advance) : advance;
+        
+        cyc_ctr_d =
+            (SecSBoxImpl == SBoxImplDom) ? (!advance ? cyc_ctr_q + 3'd1 : cyc_ctr_q) : 3'd0;
+        
+        
+        
+        
+        
+        
+        prng_update_o =
+            ((SecSBoxImpl == SBoxImplDom) ? !advance : 1'b0) | (out_valid_o & out_ready_i);
+        if (out_valid_o && out_ready_i) begin
+          sub_bytes_out_ack_o = ~dec_key_gen_q_i;
+          
+          state_we_o          = 1'b1;
+          crypt_d_o           = 1'b0;
+          cyc_ctr_d           = 3'd0;
+          
+          
+          dec_key_gen_d_o     = 1'b0;
+          prng_reseed_d_o     = 1'b0;
+          aes_cipher_ctrl_ns  = CIPHER_CTRL_IDLE;
+        end
+      end
+      CIPHER_CTRL_PRNG_RESEED: begin
+        
+        prng_reseed_req_o = prng_reseed_q_i & ~prng_reseed_done_q;
+        
+        cyc_ctr_d = 3'd0;
+        
+        out_valid_o = prng_reseed_done_q;
+        if (out_valid_o && out_ready_i) begin
+          prng_reseed_d_o    = 1'b0;
+          aes_cipher_ctrl_ns = CIPHER_CTRL_IDLE;
+        end
+      end
+      CIPHER_CTRL_CLEAR_S: begin
+        
+        state_we_o         = 1'b1;
+        state_sel_o        = STATE_CLEAR;
+        aes_cipher_ctrl_ns = CIPHER_CTRL_CLEAR_KD;
+      end
+      CIPHER_CTRL_CLEAR_KD: begin
+        
+        if (key_clear_q_i) begin
+          key_full_sel_o = KEY_FULL_CLEAR;
+          key_full_we_o  = 1'b1;
+          key_dec_sel_o  = KEY_DEC_CLEAR;
+          key_dec_we_o   = 1'b1;
+        end
+        if (data_out_clear_q_i) begin
+          
+          
+          add_rk_sel_o    = ADD_RK_INIT;
+          key_words_sel_o = KEY_WORDS_ZERO;
+          round_key_sel_o = ROUND_KEY_DIRECT;
+        end
+        
+        out_valid_o = 1'b1;
+        if (out_ready_i) begin
+          key_clear_d_o      = 1'b0;
+          data_out_clear_d_o = 1'b0;
+          aes_cipher_ctrl_ns = CIPHER_CTRL_IDLE;
+        end
+      end
+      CIPHER_CTRL_ERROR: begin
+        
+        
+        alert_o = 1'b1;
+      end
+      
+      default: begin
+        aes_cipher_ctrl_ns = CIPHER_CTRL_ERROR;
+        alert_o = 1'b1;
+      end
+    endcase
+    
+    
+    
+    if (mux_sel_err_i || sp_enc_err_i || rnd_ctr_err_i || op_err_i || alert_fatal_i) begin
+      aes_cipher_ctrl_ns = CIPHER_CTRL_ERROR;
+    end
+  end
+  
+  `PRIM_FLOP_SPARSE_FSM(u_state_regs, aes_cipher_ctrl_ns,
+      aes_cipher_ctrl_cs, aes_cipher_ctrl_e, CIPHER_CTRL_IDLE)
+  always_ff @(posedge clk_i or negedge rst_ni) begin : reg_fsm
+    if (!rst_ni) begin
+      prng_reseed_done_q <= 1'b0;
+      rnd_ctr_q          <= '0;
+      num_rounds_q       <= '0;
+    end else begin
+      prng_reseed_done_q <= prng_reseed_done_d;
+      rnd_ctr_q          <= rnd_ctr_d;
+      num_rounds_q       <= num_rounds_d;
+    end
+  end
+  assign rnd_ctr_o = rnd_ctr_q;
+  if (SecSBoxImpl == SBoxImplDom) begin : gen_cyc_ctr
+    always_ff @(posedge clk_i or negedge rst_ni) begin : reg_cyc_ctr
+      if (!rst_ni) begin
+        cyc_ctr_q <= 3'd0;
+      end else begin
+        cyc_ctr_q <= cyc_ctr_d;
+      end
+    end
+    assign cyc_ctr_expr = cyc_ctr_q >= 3'd4;
+  end else begin : gen_no_cyc_ctr
+    logic [2:0] unused_cyc_ctr;
+    assign cyc_ctr_q      = cyc_ctr_d;
+    assign unused_cyc_ctr = cyc_ctr_q;
+    assign cyc_ctr_expr   = 1'b1;
+  end
+  
+  
+  
+  
+  `ASSERT_STATIC_LINT_ERROR(AesCipherControlFsmSecMaskingNonDefault, SecMasking == 1)
+  
+  
+  `ASSERT_STATIC_LINT_ERROR(AesCipherControlFsmSecSBoxImplNonDefault, SecSBoxImpl == SBoxImplDom)
+  
+  `ASSERT(AesCiphOpValid, cfg_valid_i |-> op_i inside {
+      CIPH_FWD,
+      CIPH_INV
+      })
+  `ASSERT(AesKeyLenValid, cfg_valid_i |-> key_len_i inside {
+      AES_128,
+      AES_192,
+      AES_256
+      })
+  `ASSERT(AesCipherControlStateValid, !alert_o |-> aes_cipher_ctrl_cs inside {
+      CIPHER_CTRL_IDLE,
+      CIPHER_CTRL_INIT,
+      CIPHER_CTRL_ROUND,
+      CIPHER_CTRL_FINISH,
+      CIPHER_CTRL_PRNG_RESEED,
+      CIPHER_CTRL_CLEAR_S,
+      CIPHER_CTRL_CLEAR_KD
+      })
+endmodule
+
+module aes_cipher_control_fsm_n import aes_pkg::*;
+#(
+  parameter bit         SecMasking  = 0,
+  parameter sbox_impl_e SecSBoxImpl = SBoxImplDom
+) (
+  input  logic             clk_i,
+  input  logic             rst_ni,
+  
+  input  logic             in_valid_ni,           
+  output logic             in_ready_no,           
+  
+  output logic             out_valid_no,          
+  input  logic             out_ready_ni,          
+  
+  input  logic             cfg_valid_i,           
+  input  ciph_op_e         op_i,
+  input  key_len_e         key_len_i,
+  input  logic             crypt_ni,              
+  input  logic             dec_key_gen_ni,        
+  input  logic             prng_reseed_i,
+  input  logic             key_clear_i,
+  input  logic             data_out_clear_i,
+  input  logic             mux_sel_err_i,
+  input  logic             sp_enc_err_i,
+  input  logic             rnd_ctr_err_i,
+  input  logic             op_err_i,
+  input  logic             alert_fatal_i,
+  output logic             alert_o,
+  
+  output logic             prng_update_o,
+  output logic             prng_reseed_req_o,
+  input  logic             prng_reseed_ack_i,
+  
+  output state_sel_e       state_sel_o,
+  output logic             state_we_no,           
+  output logic             sub_bytes_en_no,       
+  input  logic             sub_bytes_out_req_ni,  
+  output logic             sub_bytes_out_ack_no,  
+  output add_rk_sel_e      add_rk_sel_o,
+  
+  output key_full_sel_e    key_full_sel_o,
+  output logic             key_full_we_no,        
+  output key_dec_sel_e     key_dec_sel_o,
+  output logic             key_dec_we_no,         
+  output logic             key_expand_en_no,      
+  input  logic             key_expand_out_req_ni, 
+  output logic             key_expand_out_ack_no, 
+  output logic             key_expand_clear_o,
+  output logic [3:0]       rnd_ctr_o,
+  output key_words_sel_e   key_words_sel_o,
+  output round_key_sel_e   round_key_sel_o,
+  
+  input  logic             crypt_q_ni,            
+  output logic             crypt_d_no,            
+  input  logic             dec_key_gen_q_ni,      
+  output logic             dec_key_gen_d_no,      
+  input  logic             prng_reseed_q_i,
+  output logic             prng_reseed_d_o,
+  input  logic             key_clear_q_i,
+  output logic             key_clear_d_o,
+  input  logic             data_out_clear_q_i,
+  output logic             data_out_clear_d_o
+);
+  
+  
+  
+  localparam int NumInBufBits = $bits({
+    in_valid_ni,
+    out_ready_ni,
+    cfg_valid_i,
+    op_i,
+    key_len_i,
+    crypt_ni,
+    dec_key_gen_ni,
+    prng_reseed_i,
+    key_clear_i,
+    data_out_clear_i,
+    mux_sel_err_i,
+    sp_enc_err_i,
+    rnd_ctr_err_i,
+    op_err_i,
+    alert_fatal_i,
+    prng_reseed_ack_i,
+    sub_bytes_out_req_ni,
+    key_expand_out_req_ni,
+    crypt_q_ni,
+    dec_key_gen_q_ni,
+    prng_reseed_q_i,
+    key_clear_q_i,
+    data_out_clear_q_i
+  });
+  logic [NumInBufBits-1:0] in, in_buf;
+  assign in = {
+    in_valid_ni,
+    out_ready_ni,
+    cfg_valid_i,
+    op_i,
+    key_len_i,
+    crypt_ni,
+    dec_key_gen_ni,
+    prng_reseed_i,
+    key_clear_i,
+    data_out_clear_i,
+    mux_sel_err_i,
+    sp_enc_err_i,
+    rnd_ctr_err_i,
+    op_err_i,
+    alert_fatal_i,
+    prng_reseed_ack_i,
+    sub_bytes_out_req_ni,
+    key_expand_out_req_ni,
+    crypt_q_ni,
+    dec_key_gen_q_ni,
+    prng_reseed_q_i,
+    key_clear_q_i,
+    data_out_clear_q_i
+  };
+  
+  
+  prim_buf #(
+    .Width(NumInBufBits)
+  ) u_prim_buf_in (
+    .in_i(in),
+    .out_o(in_buf)
+  );
+  logic                 in_valid_n;
+  logic                 out_ready_n;
+  logic                 cfg_valid;
+  ciph_op_e             op;
+  logic [$bits(op)-1:0] op_raw;
+  key_len_e             key_len;
+  logic                 crypt_n;
+  logic                 dec_key_gen_n;
+  logic                 prng_reseed;
+  logic                 key_clear;
+  logic                 data_out_clear;
+  logic                 mux_sel_err;
+  logic                 sp_enc_err;
+  logic                 rnd_ctr_err;
+  logic                 op_err;
+  logic                 alert_fatal;
+  logic                 prng_reseed_ack;
+  logic                 sub_bytes_out_req_n;
+  logic                 key_expand_out_req_n;
+  logic                 crypt_q_n;
+  logic                 dec_key_gen_q_n;
+  logic                 prng_reseed_q;
+  logic                 key_clear_q;
+  logic                 data_out_clear_q;
+  assign {in_valid_n,
+          out_ready_n,
+          cfg_valid,
+          op_raw,
+          key_len,
+          crypt_n,
+          dec_key_gen_n,
+          prng_reseed,
+          key_clear,
+          data_out_clear,
+          mux_sel_err,
+          sp_enc_err,
+          rnd_ctr_err,
+          op_err,
+          alert_fatal,
+          prng_reseed_ack,
+          sub_bytes_out_req_n,
+          key_expand_out_req_n,
+          crypt_q_n,
+          dec_key_gen_q_n,
+          prng_reseed_q,
+          key_clear_q,
+          data_out_clear_q} = in_buf;
+  assign op = ciph_op_e'(op_raw);
+  
+  logic             in_ready;
+  logic             out_valid;
+  logic             alert;
+  logic             prng_update;
+  logic             prng_reseed_req;
+  state_sel_e       state_sel;
+  logic             state_we;
+  logic             sub_bytes_en;
+  logic             sub_bytes_out_ack;
+  add_rk_sel_e      add_rk_sel;
+  key_full_sel_e    key_full_sel;
+  logic             key_full_we;
+  key_dec_sel_e     key_dec_sel;
+  logic             key_dec_we;
+  logic             key_expand_en;
+  logic             key_expand_out_ack;
+  logic             key_expand_clear;
+  key_words_sel_e   key_words_sel;
+  round_key_sel_e   round_key_sel;
+  logic [3:0]       rnd_ctr;
+  logic             crypt_d;
+  logic             dec_key_gen_d;
+  logic             prng_reseed_d;
+  logic             key_clear_d;
+  logic             data_out_clear_d;
+  
+  
+  
+  
+  
+  
+  
+  aes_cipher_control_fsm #(
+    .SecMasking  ( SecMasking  ),
+    .SecSBoxImpl ( SecSBoxImpl )
+  ) u_aes_cipher_control_fsm (
+    .clk_i                 ( clk_i                 ),
+    .rst_ni                ( rst_ni                ),
+    .in_valid_i            ( ~in_valid_n           ), 
+    .in_ready_o            ( in_ready              ), 
+    .out_valid_o           ( out_valid             ), 
+    .out_ready_i           ( ~out_ready_n          ), 
+    .cfg_valid_i           ( cfg_valid             ),
+    .op_i                  ( op                    ),
+    .key_len_i             ( key_len               ),
+    .crypt_i               ( ~crypt_n              ), 
+    .dec_key_gen_i         ( ~dec_key_gen_n        ), 
+    .prng_reseed_i         ( prng_reseed           ),
+    .key_clear_i           ( key_clear             ),
+    .data_out_clear_i      ( data_out_clear        ),
+    .mux_sel_err_i         ( mux_sel_err           ),
+    .sp_enc_err_i          ( sp_enc_err            ),
+    .rnd_ctr_err_i         ( rnd_ctr_err           ),
+    .op_err_i              ( op_err                ),
+    .alert_fatal_i         ( alert_fatal           ),
+    .alert_o               ( alert                 ),
+    .prng_update_o         ( prng_update           ),
+    .prng_reseed_req_o     ( prng_reseed_req       ),
+    .prng_reseed_ack_i     ( prng_reseed_ack       ),
+    .state_sel_o           ( state_sel             ),
+    .state_we_o            ( state_we              ), 
+    .sub_bytes_en_o        ( sub_bytes_en          ), 
+    .sub_bytes_out_req_i   ( ~sub_bytes_out_req_n  ), 
+    .sub_bytes_out_ack_o   ( sub_bytes_out_ack     ), 
+    .add_rk_sel_o          ( add_rk_sel            ),
+    .key_full_sel_o        ( key_full_sel          ),
+    .key_full_we_o         ( key_full_we           ), 
+    .key_dec_sel_o         ( key_dec_sel           ),
+    .key_dec_we_o          ( key_dec_we            ), 
+    .key_expand_en_o       ( key_expand_en         ), 
+    .key_expand_out_req_i  ( ~key_expand_out_req_n ), 
+    .key_expand_out_ack_o  ( key_expand_out_ack    ), 
+    .key_expand_clear_o    ( key_expand_clear      ),
+    .rnd_ctr_o             ( rnd_ctr               ),
+    .key_words_sel_o       ( key_words_sel         ),
+    .round_key_sel_o       ( round_key_sel         ),
+    .crypt_q_i             ( ~crypt_q_n            ), 
+    .crypt_d_o             ( crypt_d               ), 
+    .dec_key_gen_q_i       ( ~dec_key_gen_q_n      ), 
+    .dec_key_gen_d_o       ( dec_key_gen_d         ), 
+    .key_clear_q_i         ( key_clear_q           ),
+    .key_clear_d_o         ( key_clear_d           ),
+    .prng_reseed_q_i       ( prng_reseed_q         ),
+    .prng_reseed_d_o       ( prng_reseed_d         ),
+    .data_out_clear_q_i    ( data_out_clear_q      ),
+    .data_out_clear_d_o    ( data_out_clear_d      )
+  );
+  
+  
+  
+  localparam int NumOutBufBits = $bits({
+    in_ready_no,
+    out_valid_no,
+    alert_o,
+    prng_update_o,
+    prng_reseed_req_o,
+    state_sel_o,
+    state_we_no,
+    sub_bytes_en_no,
+    sub_bytes_out_ack_no,
+    add_rk_sel_o,
+    key_full_sel_o,
+    key_full_we_no,
+    key_dec_sel_o,
+    key_dec_we_no,
+    key_expand_en_no,
+    key_expand_out_ack_no,
+    key_expand_clear_o,
+    rnd_ctr_o,
+    key_words_sel_o,
+    round_key_sel_o,
+    crypt_d_no,
+    dec_key_gen_d_no,
+    key_clear_d_o,
+    prng_reseed_d_o,
+    data_out_clear_d_o
+  });
+  logic [NumOutBufBits-1:0] out, out_buf;
+  
+  
+  assign out = {
+    ~in_ready,
+    ~out_valid,
+    alert,
+    prng_update,
+    prng_reseed_req,
+    state_sel,
+    ~state_we,
+    ~sub_bytes_en,
+    ~sub_bytes_out_ack,
+    add_rk_sel,
+    key_full_sel,
+    ~key_full_we,
+    key_dec_sel,
+    ~key_dec_we,
+    ~key_expand_en,
+    ~key_expand_out_ack,
+    key_expand_clear,
+    rnd_ctr,
+    key_words_sel,
+    round_key_sel,
+    ~crypt_d,
+    ~dec_key_gen_d,
+    key_clear_d,
+    prng_reseed_d,
+    data_out_clear_d
+  };
+  
+  
+  prim_buf #(
+    .Width(NumOutBufBits)
+  ) u_prim_buf_out (
+    .in_i(out),
+    .out_o(out_buf)
+  );
+  assign {in_ready_no,
+          out_valid_no,
+          alert_o,
+          prng_update_o,
+          prng_reseed_req_o,
+          state_sel_o,
+          state_we_no,
+          sub_bytes_en_no,
+          sub_bytes_out_ack_no,
+          add_rk_sel_o,
+          key_full_sel_o,
+          key_full_we_no,
+          key_dec_sel_o,
+          key_dec_we_no,
+          key_expand_en_no,
+          key_expand_out_ack_no,
+          key_expand_clear_o,
+          rnd_ctr_o,
+          key_words_sel_o,
+          round_key_sel_o,
+          crypt_d_no,
+          dec_key_gen_d_no,
+          key_clear_d_o,
+          prng_reseed_d_o,
+          data_out_clear_d_o} = out_buf;
+endmodule
+
+module aes_cipher_control_fsm_p import aes_pkg::*;
+#(
+  parameter bit         SecMasking  = 0,
+  parameter sbox_impl_e SecSBoxImpl = SBoxImplDom
+) (
+  input  logic             clk_i,
+  input  logic             rst_ni,
+  
+  input  logic             in_valid_i,            
+  output logic             in_ready_o,            
+  
+  output logic             out_valid_o,           
+  input  logic             out_ready_i,           
+  
+  input  logic             cfg_valid_i,           
+  input  ciph_op_e         op_i,
+  input  key_len_e         key_len_i,
+  input  logic             crypt_i,               
+  input  logic             dec_key_gen_i,         
+  input  logic             prng_reseed_i,
+  input  logic             key_clear_i,
+  input  logic             data_out_clear_i,
+  input  logic             mux_sel_err_i,
+  input  logic             sp_enc_err_i,
+  input  logic             rnd_ctr_err_i,
+  input  logic             op_err_i,
+  input  logic             alert_fatal_i,
+  output logic             alert_o,
+  
+  output logic             prng_update_o,
+  output logic             prng_reseed_req_o,
+  input  logic             prng_reseed_ack_i,
+  
+  output state_sel_e       state_sel_o,
+  output logic             state_we_o,            
+  output logic             sub_bytes_en_o,        
+  input  logic             sub_bytes_out_req_i,   
+  output logic             sub_bytes_out_ack_o,   
+  output add_rk_sel_e      add_rk_sel_o,
+  
+  output key_full_sel_e    key_full_sel_o,
+  output logic             key_full_we_o,         
+  output key_dec_sel_e     key_dec_sel_o,
+  output logic             key_dec_we_o,          
+  output logic             key_expand_en_o,       
+  input  logic             key_expand_out_req_i,  
+  output logic             key_expand_out_ack_o,  
+  output logic             key_expand_clear_o,
+  output logic [3:0]       rnd_ctr_o,
+  output key_words_sel_e   key_words_sel_o,
+  output round_key_sel_e   round_key_sel_o,
+  
+  input  logic             crypt_q_i,             
+  output logic             crypt_d_o,             
+  input  logic             dec_key_gen_q_i,       
+  output logic             dec_key_gen_d_o,       
+  input  logic             prng_reseed_q_i,
+  output logic             prng_reseed_d_o,
+  input  logic             key_clear_q_i,
+  output logic             key_clear_d_o,
+  input  logic             data_out_clear_q_i,
+  output logic             data_out_clear_d_o
+);
+  
+  
+  
+  localparam int NumInBufBits = $bits({
+    in_valid_i,
+    out_ready_i,
+    cfg_valid_i,
+    op_i,
+    key_len_i,
+    crypt_i,
+    dec_key_gen_i,
+    prng_reseed_i,
+    key_clear_i,
+    data_out_clear_i,
+    mux_sel_err_i,
+    sp_enc_err_i,
+    rnd_ctr_err_i,
+    op_err_i,
+    alert_fatal_i,
+    prng_reseed_ack_i,
+    sub_bytes_out_req_i,
+    key_expand_out_req_i,
+    crypt_q_i,
+    dec_key_gen_q_i,
+    prng_reseed_q_i,
+    key_clear_q_i,
+    data_out_clear_q_i
+  });
+  logic [NumInBufBits-1:0] in, in_buf;
+  assign in = {
+    in_valid_i,
+    out_ready_i,
+    cfg_valid_i,
+    op_i,
+    key_len_i,
+    crypt_i,
+    dec_key_gen_i,
+    prng_reseed_i,
+    key_clear_i,
+    data_out_clear_i,
+    mux_sel_err_i,
+    sp_enc_err_i,
+    rnd_ctr_err_i,
+    op_err_i,
+    alert_fatal_i,
+    prng_reseed_ack_i,
+    sub_bytes_out_req_i,
+    key_expand_out_req_i,
+    crypt_q_i,
+    dec_key_gen_q_i,
+    prng_reseed_q_i,
+    key_clear_q_i,
+    data_out_clear_q_i
+  };
+  
+  
+  prim_buf #(
+    .Width(NumInBufBits)
+  ) u_prim_buf_in (
+    .in_i(in),
+    .out_o(in_buf)
+  );
+  logic                 in_valid;
+  logic                 out_ready;
+  logic                 cfg_valid;
+  ciph_op_e             op;
+  logic [$bits(op)-1:0] op_raw;
+  key_len_e             key_len;
+  logic                 crypt;
+  logic                 dec_key_gen;
+  logic                 prng_reseed;
+  logic                 key_clear;
+  logic                 data_out_clear;
+  logic                 mux_sel_err;
+  logic                 sp_enc_err;
+  logic                 rnd_ctr_err;
+  logic                 op_err;
+  logic                 alert_fatal;
+  logic                 prng_reseed_ack;
+  logic                 sub_bytes_out_req;
+  logic                 key_expand_out_req;
+  logic                 crypt_q;
+  logic                 dec_key_gen_q;
+  logic                 prng_reseed_q;
+  logic                 key_clear_q;
+  logic                 data_out_clear_q;
+  assign {in_valid,
+          out_ready,
+          cfg_valid,
+          op_raw,
+          key_len,
+          crypt,
+          dec_key_gen,
+          prng_reseed,
+          key_clear,
+          data_out_clear,
+          mux_sel_err,
+          sp_enc_err,
+          rnd_ctr_err,
+          op_err,
+          alert_fatal,
+          prng_reseed_ack,
+          sub_bytes_out_req,
+          key_expand_out_req,
+          crypt_q,
+          dec_key_gen_q,
+          prng_reseed_q,
+          key_clear_q,
+          data_out_clear_q} = in_buf;
+  assign op = ciph_op_e'(op_raw);
+  
+  logic             in_ready;
+  logic             out_valid;
+  logic             alert;
+  logic             prng_update;
+  logic             prng_reseed_req;
+  state_sel_e       state_sel;
+  logic             state_we;
+  logic             sub_bytes_en;
+  logic             sub_bytes_out_ack;
+  add_rk_sel_e      add_rk_sel;
+  key_full_sel_e    key_full_sel;
+  logic             key_full_we;
+  key_dec_sel_e     key_dec_sel;
+  logic             key_dec_we;
+  logic             key_expand_en;
+  logic             key_expand_out_ack;
+  logic             key_expand_clear;
+  logic [3:0]       rnd_ctr;
+  key_words_sel_e   key_words_sel;
+  round_key_sel_e   round_key_sel;
+  logic             crypt_d;
+  logic             dec_key_gen_d;
+  logic             prng_reseed_d;
+  logic             key_clear_d;
+  logic             data_out_clear_d;
+  
+  
+  
+  aes_cipher_control_fsm #(
+    .SecMasking  ( SecMasking  ),
+    .SecSBoxImpl ( SecSBoxImpl )
+  ) u_aes_cipher_control_fsm (
+    .clk_i                 ( clk_i                  ),
+    .rst_ni                ( rst_ni                 ),
+    .in_valid_i            ( in_valid               ),
+    .in_ready_o            ( in_ready               ),
+    .out_valid_o           ( out_valid              ),
+    .out_ready_i           ( out_ready              ),
+    .cfg_valid_i           ( cfg_valid              ),
+    .op_i                  ( op                     ),
+    .key_len_i             ( key_len                ),
+    .crypt_i               ( crypt                  ),
+    .dec_key_gen_i         ( dec_key_gen            ),
+    .prng_reseed_i         ( prng_reseed            ),
+    .key_clear_i           ( key_clear              ),
+    .data_out_clear_i      ( data_out_clear         ),
+    .mux_sel_err_i         ( mux_sel_err            ),
+    .sp_enc_err_i          ( sp_enc_err             ),
+    .rnd_ctr_err_i         ( rnd_ctr_err            ),
+    .op_err_i              ( op_err                 ),
+    .alert_fatal_i         ( alert_fatal            ),
+    .alert_o               ( alert                  ),
+    .prng_update_o         ( prng_update            ),
+    .prng_reseed_req_o     ( prng_reseed_req        ),
+    .prng_reseed_ack_i     ( prng_reseed_ack        ),
+    .state_sel_o           ( state_sel              ),
+    .state_we_o            ( state_we               ),
+    .sub_bytes_en_o        ( sub_bytes_en           ),
+    .sub_bytes_out_req_i   ( sub_bytes_out_req      ),
+    .sub_bytes_out_ack_o   ( sub_bytes_out_ack      ),
+    .add_rk_sel_o          ( add_rk_sel             ),
+    .key_full_sel_o        ( key_full_sel           ),
+    .key_full_we_o         ( key_full_we            ),
+    .key_dec_sel_o         ( key_dec_sel            ),
+    .key_dec_we_o          ( key_dec_we             ),
+    .key_expand_en_o       ( key_expand_en          ),
+    .key_expand_out_req_i  ( key_expand_out_req     ),
+    .key_expand_out_ack_o  ( key_expand_out_ack     ),
+    .key_expand_clear_o    ( key_expand_clear       ),
+    .rnd_ctr_o             ( rnd_ctr                ),
+    .key_words_sel_o       ( key_words_sel          ),
+    .round_key_sel_o       ( round_key_sel          ),
+    .crypt_q_i             ( crypt_q                ),
+    .crypt_d_o             ( crypt_d                ),
+    .dec_key_gen_q_i       ( dec_key_gen_q          ),
+    .dec_key_gen_d_o       ( dec_key_gen_d          ),
+    .key_clear_q_i         ( key_clear_q            ),
+    .key_clear_d_o         ( key_clear_d            ),
+    .prng_reseed_q_i       ( prng_reseed_q          ),
+    .prng_reseed_d_o       ( prng_reseed_d          ),
+    .data_out_clear_q_i    ( data_out_clear_q       ),
+    .data_out_clear_d_o    ( data_out_clear_d       )
+  );
+  
+  
+  
+  localparam int NumOutBufBits = $bits({
+    in_ready_o,
+    out_valid_o,
+    alert_o,
+    prng_update_o,
+    prng_reseed_req_o,
+    state_sel_o,
+    state_we_o,
+    sub_bytes_en_o,
+    sub_bytes_out_ack_o,
+    add_rk_sel_o,
+    key_full_sel_o,
+    key_full_we_o,
+    key_dec_sel_o,
+    key_dec_we_o,
+    key_expand_en_o,
+    key_expand_out_ack_o,
+    key_expand_clear_o,
+    rnd_ctr_o,
+    key_words_sel_o,
+    round_key_sel_o,
+    crypt_d_o,
+    dec_key_gen_d_o,
+    key_clear_d_o,
+    prng_reseed_d_o,
+    data_out_clear_d_o
+  });
+  logic [NumOutBufBits-1:0] out, out_buf;
+  assign out = {
+    in_ready,
+    out_valid,
+    alert,
+    prng_update,
+    prng_reseed_req,
+    state_sel,
+    state_we,
+    sub_bytes_en,
+    sub_bytes_out_ack,
+    add_rk_sel,
+    key_full_sel,
+    key_full_we,
+    key_dec_sel,
+    key_dec_we,
+    key_expand_en,
+    key_expand_out_ack,
+    key_expand_clear,
+    rnd_ctr,
+    key_words_sel,
+    round_key_sel,
+    crypt_d,
+    dec_key_gen_d,
+    key_clear_d,
+    prng_reseed_d,
+    data_out_clear_d
+  };
+  
+  
+  prim_buf #(
+    .Width(NumOutBufBits)
+  ) u_prim_buf_out (
+    .in_i(out),
+    .out_o(out_buf)
+  );
+  assign {in_ready_o,
+          out_valid_o,
+          alert_o,
+          prng_update_o,
+          prng_reseed_req_o,
+          state_sel_o,
+          state_we_o,
+          sub_bytes_en_o,
+          sub_bytes_out_ack_o,
+          add_rk_sel_o,
+          key_full_sel_o,
+          key_full_we_o,
+          key_dec_sel_o,
+          key_dec_we_o,
+          key_expand_en_o,
+          key_expand_out_ack_o,
+          key_expand_clear_o,
+          rnd_ctr_o,
+          key_words_sel_o,
+          round_key_sel_o,
+          crypt_d_o,
+          dec_key_gen_d_o,
+          key_clear_d_o,
+          prng_reseed_d_o,
+          data_out_clear_d_o} = out_buf;
+endmodule
+
+`ifndef PRIM_ASSERT_SV
+`define PRIM_ASSERT_SV
+`define ASSERT_DEFAULT_CLK clk_i
+`define ASSERT_DEFAULT_RST !rst_ni
+`define PRIM_STRINGIFY(__x) `"__x`"
+`define ASSERT_ERROR(__name)                                                             \
+`ifdef UVM                                                                               \
+  uvm_pkg::uvm_report_error("ASSERT FAILED", `PRIM_STRINGIFY(__name), uvm_pkg::UVM_NONE, \
+                            `__FILE__, `__LINE__, "", 1);                                \
+`else                                                                                    \
+  $error("%0t: (%0s:%0d) [%m] [ASSERT FAILED] %0s", $time, `__FILE__, `__LINE__,         \
+         `PRIM_STRINGIFY(__name));                                                       \
+`endif
+`define ASSERT_STATIC_LINT_ERROR(__name, __prop)     \
+  localparam int __name = (__prop) ? 1 : 2;          \
+  always_comb begin                                  \
+    logic unused_assert_static_lint_error;           \
+    unused_assert_static_lint_error = __name'(1'b1); \
+  end
+`define ASSERT_STATIC_IN_PACKAGE(__name, __prop)              \
+  function automatic bit assert_static_in_package_``__name(); \
+    bit unused_bit [((__prop) ? 1 : -1)];                     \
+    unused_bit = '{default: 1'b0};                            \
+    return unused_bit[0];                                     \
+  endfunction
+`ifdef VERILATOR
+ `include "prim_assert_dummy_macros.svh"`elsif SYNTHESIS
+ `include "prim_assert_dummy_macros.svh"`elsif YOSYS
+ `include "prim_assert_yosys_macros.svh"
+ `define INC_ASSERT`else
+ 
+`define ASSERT_I(__name, __prop) \
+  __name: assert (__prop)        \
+    else begin                   \
+      `ASSERT_ERROR(__name)      \
+    end
+`define ASSERT_INIT(__name, __prop)                                                  \
+`ifdef FPV_ON                                                                        \
+  if (!(__prop)) $fatal(2, "Fatal static assertion [%s]: (%s) is not true.",         \
+                        (__name), (__prop));                                         \
+`else                                                                                \
+  initial begin                                                                      \
+    __name: assert (__prop)                                                          \
+      else begin                                                                     \
+        `ASSERT_ERROR(__name)                                                        \
+      end                                                                            \
+  end                                                                                \
+`endif
+`define ASSERT_INIT_NET(__name, __prop)                                                   \
+  initial begin                                                                      \
+    
+    
+    
+    #1ps;                                                                            \
+    __name: assert (__prop)                                                          \
+      else begin                                                                     \
+        `ASSERT_ERROR(__name)                                                        \
+      end                                                                            \
+  end                                                                                \
+`define ASSERT_FINAL(__name, __prop)                                         \
+`ifndef FPV_ON                                                               \
+  final begin                                                                \
+    __name: assert (__prop || $test$plusargs("disable_assert_final_checks")) \
+      else begin                                                             \
+        `ASSERT_ERROR(__name)                                                \
+      end                                                                    \
+  end                                                                        \
+`endif
+`define ASSERT_AT_RESET(__name, __prop, __rst = `ASSERT_DEFAULT_RST)          \
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+`ifndef FPV_ON                                                                \
+  __name: assert property (@(posedge __rst) $isunknown(__rst) || (__prop))    \
+`else                                                                         \
+  __name: assert property (@(posedge __rst) (__prop))                         \
+`endif                                                                        \
+    else begin                                                                \
+      `ASSERT_ERROR(__name)                                                   \
+    end
+`define ASSERT_AT_RESET_AND_FINAL(__name, __prop, __rst = `ASSERT_DEFAULT_RST) \
+    `ASSERT_AT_RESET(AtReset_``__name``, __prop, __rst)                        \
+    `ASSERT_FINAL(Final_``__name``, __prop)
+`define ASSERT(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: assert property (@(posedge __clk) disable iff ((__rst) !== '0) (__prop))       \
+    else begin                                                                           \
+      `ASSERT_ERROR(__name)                                                              \
+    end
+`define ASSERT_NEVER(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: assert property (@(posedge __clk) disable iff ((__rst) !== '0) not (__prop))         \
+    else begin                                                                                 \
+      `ASSERT_ERROR(__name)                                                                    \
+    end
+`define ASSERT_KNOWN(__name, __sig, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifndef FPV_ON                                                                                \
+  `ASSERT(__name, !$isunknown(__sig), __clk, __rst)                                           \
+`endif
+`define COVER(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: cover property (@(posedge __clk) disable iff ((__rst) !== '0) (__prop));
+`define ASSUME(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: assume property (@(posedge __clk) disable iff ((__rst) !== '0) (__prop))       \
+    else begin                                                                           \
+      `ASSERT_ERROR(__name)                                                              \
+    end
+`define ASSUME_I(__name, __prop) \
+  __name: assume (__prop)        \
+    else begin                   \
+      `ASSERT_ERROR(__name)      \
+    end
+ `define INC_ASSERT
+`endif
+`define ASSERT_PULSE(__name, __sig, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  `ASSERT(__name, $rose(__sig) |=> !(__sig), __clk, __rst)
+`define ASSERT_IF(__name, __prop, __enable, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  `ASSERT(__name, (__enable) |-> (__prop), __clk, __rst)
+`define ASSERT_KNOWN_IF(__name, __sig, __enable, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifndef FPV_ON                                                                                             \
+  `ASSERT_KNOWN(__name``KnownEnable, __enable, __clk, __rst)                                               \
+  `ASSERT_IF(__name, !$isunknown(__sig), __enable, __clk, __rst)                                           \
+`endif
+`define ASSUME_FPV(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifdef FPV_ON                                                                                \
+   `ASSUME(__name, __prop, __clk, __rst)                                                     \
+`endif
+`define ASSUME_I_FPV(__name, __prop) \
+`ifdef FPV_ON                        \
+   `ASSUME_I(__name, __prop)         \
+`endif
+`define COVER_FPV(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifdef FPV_ON                                                                               \
+   `COVER(__name, __prop, __clk, __rst)                                                     \
+`endif
+`define ASSERT_FPV_LINEAR_FSM(__name, __state, __type, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  `ifdef INC_ASSERT                                                                                              \
+     bit __name``_cond;                                                                                          \
+     always_ff @(posedge __clk or posedge __rst) begin                                                           \
+       if (__rst) begin                                                                                          \
+         __name``_cond <= 0;                                                                                     \
+       end else begin                                                                                            \
+         __name``_cond <= 1;                                                                                     \
+       end                                                                                                       \
+     end                                                                                                         \
+     property __name``_p;                                                                                        \
+       __type initial_state;                                                                                     \
+       (!$stable(__state) & __name``_cond, initial_state = $past(__state)) |->                                   \
+           (__state != initial_state) until !(__name``_cond);                                                    \
+     endproperty                                                                                                 \
+   `ASSERT(__name, __name``_p, __clk, 0)                                                                         \
+  `endif
+`ifndef PRIM_ASSERT_SEC_CM_SVH
+`define PRIM_ASSERT_SEC_CM_SVH
+`define _SEC_CM_ALERT_MAX_CYC 30
+`define ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, ERR_NAME_, CLK_, RST_) \
+  `ASSERT(FpvSecCm``NAME_``,                                                                    \
+          $rose(HIER_.ERR_NAME_) && !(GATE_) |-> ##[0:MAX_CYCLES_] (ERR_),                      \
+          CLK_, RST_)                                                                           \
+  `ifdef INC_ASSERT                                                                             \
+    assign HIER_.unused_assert_connected = 1'b1;                                                \
+  `endif
+`define ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, ERR_NAME_)    \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, (ALERT_.alert_p), GATE_, MAX_CYCLES_, ERR_NAME_, \
+                            `ASSERT_DEFAULT_CLK, `ASSERT_DEFAULT_RST)                      \
+  `ASSUME_FPV(``NAME_``TriggerAfterAlertInit_S,                                            \
+              $stable(rst_ni) == 0 |-> HIER_.ERR_NAME_ == 0 [*10])
+`define ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_IN_, GATE_, MAX_CYCLES_, ERR_NAME_) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ALERT_IN_, GATE_, MAX_CYCLES_, ERR_NAME_,           \
+                            `ASSERT_DEFAULT_CLK, `ASSERT_DEFAULT_RST)
+`define ASSERT_PRIM_COUNT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_DOUBLE_LFSR_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_FSM_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, unused_err_o)
+`define ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_REG_WE_ONEHOT_ERROR_TRIGGER_ALERT(NAME_, REG_TOP_HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT(NAME_, \
+    REG_TOP_HIER_.u_prim_reg_we_check.u_prim_onehot_check, ALERT_, GATE_, MAX_CYCLES_)
+`define ASSERT_PRIM_FIFO_SYNC_SINGLETON_ERROR_TRIGGER_ALERT(NAME, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_COUNT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_DOUBLE_LFSR_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_FSM_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, unused_err_o)
+`define ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_REG_WE_ONEHOT_ERROR_TRIGGER_ALERT_IN(NAME_, REG_TOP_HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT_IN(NAME_, \
+    REG_TOP_HIER_.u_prim_reg_we_check.u_prim_onehot_check, ALERT_, GATE_, MAX_CYCLES_)
+`define ASSERT_PRIM_FIFO_SYNC_SINGLETON_ERROR_TRIGGER_ALERT_IN(NAME, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_FSM_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = 2, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, unused_err_o, CLK_, RST_)
+`define ASSERT_PRIM_COUNT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = 2, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, err_o, CLK_, RST_)
+`define ASSERT_PRIM_DOUBLE_LFSR_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = 2, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, err_o, CLK_, RST_)
+`define ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, err_o, CLK_, RST_)
+`define ASSERT_PRIM_REG_WE_ONEHOT_ERROR_TRIGGER_ERR(NAME_, REG_TOP_HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ERR(NAME_, \
+    REG_TOP_HIER_.u_prim_reg_we_check.u_prim_onehot_check, ERR_, GATE_, MAX_CYCLES_, CLK_, RST_)
+`endif 
+`ifndef PRIM_FLOP_MACROS_SV
+`define PRIM_FLOP_MACROS_SV
+`define PRIM_FLOP_CLK clk_i
+`define PRIM_FLOP_RST rst_ni
+`define PRIM_FLOP_RESVAL '0
+`define PRIM_FLOP_A(__d, __q, __resval = `PRIM_FLOP_RESVAL, __clk = `PRIM_FLOP_CLK, __rst_n = `PRIM_FLOP_RST) \
+  always_ff @(posedge __clk or negedge __rst_n) begin \
+    if (!__rst_n) begin                               \
+      __q <= __resval;                                \
+    end else begin                                    \
+      __q <= __d;                                     \
+    end                                               \
+  end
+`define PRIM_FLOP_SPARSE_FSM(__name, __d, __q, __type, __resval = `PRIM_FLOP_RESVAL, __clk = `PRIM_FLOP_CLK, __rst_n = `PRIM_FLOP_RST, __alert_trigger_sva_en = 1) \
+  `ifdef SIMULATION                                   \
+    prim_sparse_fsm_flop #(                           \
+      .StateEnumT(__type),                            \
+      .Width($bits(__type)),                          \
+      .ResetValue($bits(__type)'(__resval)),          \
+      .EnableAlertTriggerSVA(__alert_trigger_sva_en), \
+      .CustomForceName(`PRIM_STRINGIFY(__q))          \
+    ) __name (                                        \
+      .clk_i   ( __clk   ),                           \
+      .rst_ni  ( __rst_n ),                           \
+      .state_i ( __d     ),                           \
+      .state_o (         )                            \
+    );                                                \
+    `PRIM_FLOP_A(__d, __q, __resval, __clk, __rst_n)  \
+    `ASSERT(``__name``_A, __q === ``__name``.state_o) \
+  `else                                               \
+    prim_sparse_fsm_flop #(                           \
+      .StateEnumT(__type),                            \
+      .Width($bits(__type)),                          \
+      .ResetValue($bits(__type)'(__resval)),          \
+      .EnableAlertTriggerSVA(__alert_trigger_sva_en)  \
+    ) __name (                                        \
+      .clk_i   ( __clk   ),                           \
+      .rst_ni  ( __rst_n ),                           \
+      .state_i ( __d     ),                           \
+      .state_o ( __q     )                            \
+    );                                                \
+  `endif
+`endif 
+`endif 
+module TopModule import aes_pkg::*;
+#(
+  parameter bit          AES192Enable         = 1,
+  parameter bit          CiphOpFwdOnly        = 0,
+  parameter bit          SecMasking           = 1,
+  parameter sbox_impl_e  SecSBoxImpl          = SBoxImplDom,
+  parameter bit          SecAllowForcingMasks = 0,
+  parameter bit          SecSkipPRNGReseeding = 0,
+  parameter int unsigned EntropyWidth         = edn_pkg::ENDPOINT_BUS_WIDTH,
+  localparam int         NumShares            = SecMasking ? 2 : 1, 
+  parameter masking_lfsr_seed_t RndCnstMaskingLfsrSeed = RndCnstMaskingLfsrSeedDefault,
+  parameter masking_lfsr_perm_t RndCnstMaskingLfsrPerm = RndCnstMaskingLfsrPermDefault
+) (
+  input  logic                        clk_i,
+  input  logic                        rst_ni,
+  
+  input  sp2v_e                       in_valid_i,
+  output sp2v_e                       in_ready_o,
+  
+  output sp2v_e                       out_valid_o,
+  input  sp2v_e                       out_ready_i,
+  
+  input  logic                        cfg_valid_i, 
+  input  ciph_op_e                    op_i,
+  input  key_len_e                    key_len_i,
+  input  sp2v_e                       crypt_i,
+  output sp2v_e                       crypt_o,
+  input  sp2v_e                       dec_key_gen_i,
+  output sp2v_e                       dec_key_gen_o,
+  input  logic                        prng_reseed_i,
+  output logic                        prng_reseed_o,
+  input  logic                        key_clear_i,
+  output logic                        key_clear_o,
+  input  logic                        data_out_clear_i, 
+  output logic                        data_out_clear_o,
+  input  logic                        alert_fatal_i,
+  output logic                        alert_o,
+  
+  input  logic        [3:0][3:0][7:0] prd_clearing_state_i [NumShares],
+  input  logic            [7:0][31:0] prd_clearing_key_i [NumShares],
+  
+  input  logic                        force_masks_i, 
+  output logic        [3:0][3:0][7:0] data_in_mask_o,
+  output logic                        entropy_req_o,
+  input  logic                        entropy_ack_i,
+  input  logic     [EntropyWidth-1:0] entropy_i,
+  
+  input  logic        [3:0][3:0][7:0] state_init_i [NumShares],
+  input  logic            [7:0][31:0] key_init_i [NumShares],
+  output logic        [3:0][3:0][7:0] state_o [NumShares]
+);
+  
+  logic               [3:0][3:0][7:0] state_d [NumShares];
+  logic               [3:0][3:0][7:0] state_q [NumShares];
+  sp2v_e                              state_we_ctrl;
+  sp2v_e                              state_we;
+  logic           [StateSelWidth-1:0] state_sel_raw;
+  state_sel_e                         state_sel_ctrl;
+  state_sel_e                         state_sel;
+  logic                               state_sel_err;
+  sp2v_e                              sub_bytes_en;
+  sp2v_e                              sub_bytes_out_req;
+  sp2v_e                              sub_bytes_out_ack;
+  logic                               sub_bytes_err;
+  logic               [3:0][3:0][7:0] sub_bytes_out;
+  logic               [3:0][3:0][7:0] sb_in_mask;
+  logic               [3:0][3:0][7:0] sb_out_mask;
+  logic               [3:0][3:0][7:0] shift_rows_in [NumShares];
+  logic               [3:0][3:0][7:0] shift_rows_out [NumShares];
+  logic               [3:0][3:0][7:0] mix_columns_out [NumShares];
+  logic               [3:0][3:0][7:0] add_round_key_in [NumShares];
+  logic               [3:0][3:0][7:0] add_round_key_out [NumShares];
+  logic           [AddRKSelWidth-1:0] add_rk_sel_raw;
+  add_rk_sel_e                        add_rk_sel_ctrl;
+  add_rk_sel_e                        add_rk_sel;
+  logic                               add_rk_sel_err;
+  logic                   [7:0][31:0] key_full_d [NumShares];
+  logic                   [7:0][31:0] key_full_q [NumShares];
+  sp2v_e                              key_full_we_ctrl;
+  sp2v_e                              key_full_we;
+  logic         [KeyFullSelWidth-1:0] key_full_sel_raw;
+  key_full_sel_e                      key_full_sel_ctrl;
+  key_full_sel_e                      key_full_sel;
+  logic                               key_full_sel_err;
+  logic                   [7:0][31:0] key_dec_d [NumShares];
+  logic                   [7:0][31:0] key_dec_q [NumShares];
+  sp2v_e                              key_dec_we_ctrl;
+  sp2v_e                              key_dec_we;
+  logic          [KeyDecSelWidth-1:0] key_dec_sel_raw;
+  key_dec_sel_e                       key_dec_sel_ctrl;
+  key_dec_sel_e                       key_dec_sel;
+  logic                               key_dec_sel_err;
+  logic                   [7:0][31:0] key_expand_out [NumShares];
+  ciph_op_e                           key_expand_op;
+  sp2v_e                              key_expand_en;
+  logic                               key_expand_prd_we;
+  sp2v_e                              key_expand_out_req;
+  sp2v_e                              key_expand_out_ack;
+  logic                               key_expand_err;
+  logic                               key_expand_clear;
+  logic                         [3:0] key_expand_round;
+  logic        [KeyWordsSelWidth-1:0] key_words_sel_raw;
+  key_words_sel_e                     key_words_sel_ctrl;
+  key_words_sel_e                     key_words_sel;
+  logic                               key_words_sel_err;
+  logic                   [3:0][31:0] key_words [NumShares];
+  logic               [3:0][3:0][7:0] key_bytes [NumShares];
+  logic               [3:0][3:0][7:0] key_mix_columns_out [NumShares];
+  logic               [3:0][3:0][7:0] round_key [NumShares];
+  logic        [RoundKeySelWidth-1:0] round_key_sel_raw;
+  round_key_sel_e                     round_key_sel_ctrl;
+  round_key_sel_e                     round_key_sel;
+  logic                               round_key_sel_err;
+  logic                               cfg_valid;
+  logic                               mux_sel_err;
+  logic                               sp_enc_err_d, sp_enc_err_q;
+  logic                               op_err;
+  
+  logic         [WidthPRDMasking-1:0] prd_masking;
+  logic  [3:0][3:0][WidthPRDSBox-1:0] prd_sub_bytes_d;
+  logic  [3:0][3:0][WidthPRDSBox-1:0] prd_sub_bytes_q;
+  logic             [WidthPRDKey-1:0] prd_key_expand;
+  logic                               prd_masking_upd;
+  logic                               prd_masking_rsd_req;
+  logic                               prd_masking_rsd_ack;
+  logic               [3:0][3:0][7:0] data_in_mask;
+  
+  
+  assign op_err    = ~(op_i == CIPH_FWD || op_i == CIPH_INV);
+  assign cfg_valid = cfg_valid_i & ~op_err;
+  
+  
+  
+  
+  
+  always_comb begin : state_mux
+    unique case (state_sel)
+      STATE_INIT:  state_d = state_init_i;
+      STATE_ROUND: state_d = add_round_key_out;
+      STATE_CLEAR: state_d = prd_clearing_state_i;
+      default:     state_d = prd_clearing_state_i;
+    endcase
+  end
+  always_ff @(posedge clk_i or negedge rst_ni) begin : state_reg
+    if (!rst_ni) begin
+      state_q <= '{default: '0};
+    end else if (state_we == SP2V_HIGH) begin
+      state_q <= state_d;
+    end
+  end
+  
+  if (!SecMasking) begin : gen_no_masks
+    
+    assign sb_in_mask  = '0;
+    assign prd_masking = '0;
+    
+    logic unused_entropy_ack;
+    logic [EntropyWidth-1:0] unused_entropy;
+    assign unused_entropy_ack = entropy_ack_i;
+    assign unused_entropy     = entropy_i;
+    assign entropy_req_o      = 1'b0;
+    logic unused_force_masks;
+    logic unused_prd_masking_upd;
+    logic unused_prd_masking_rsd_req;
+    assign unused_force_masks         = force_masks_i;
+    assign unused_prd_masking_upd     = prd_masking_upd;
+    assign unused_prd_masking_rsd_req = prd_masking_rsd_req;
+    assign prd_masking_rsd_ack        = 1'b0;
+    logic [3:0][3:0][7:0] unused_sb_out_mask;
+    assign unused_sb_out_mask = sb_out_mask;
+  end else begin : gen_masks
+    
+    assign sb_in_mask  = state_q[1];
+    
+    
+    
+    aes_prng_masking #(
+      .Width                ( WidthPRDMasking        ),
+      .EntropyWidth         ( EntropyWidth           ),
+      .SecAllowForcingMasks ( SecAllowForcingMasks   ),
+      .SecSkipPRNGReseeding ( SecSkipPRNGReseeding   ),
+      .RndCnstLfsrSeed      ( RndCnstMaskingLfsrSeed ),
+      .RndCnstLfsrPerm      ( RndCnstMaskingLfsrPerm )
+    ) u_aes_prng_masking (
+      .clk_i         ( clk_i               ),
+      .rst_ni        ( rst_ni              ),
+      .force_masks_i ( force_masks_i       ),
+      .data_update_i ( prd_masking_upd     ),
+      .data_o        ( prd_masking         ),
+      .reseed_req_i  ( prd_masking_rsd_req ),
+      .reseed_ack_o  ( prd_masking_rsd_ack ),
+      .entropy_req_o ( entropy_req_o       ),
+      .entropy_ack_i ( entropy_ack_i       ),
+      .entropy_i     ( entropy_i           )
+    );
+  end
+  
+  
+  
+  
+  assign prd_key_expand  = prd_masking[WidthPRDMasking-1 -: WidthPRDKey];
+  assign prd_sub_bytes_d = prd_masking[WidthPRDData-1 -: WidthPRDData];
+  
+  if (!SecMasking) begin : gen_no_prd_buffer
+    
+    assign prd_sub_bytes_q = prd_sub_bytes_d;
+  end else begin : gen_prd_buffer
+    
+    
+    
+    
+    
+    always_ff @(posedge clk_i or negedge rst_ni) begin : prd_sub_bytes_reg
+      if (!rst_ni) begin
+        prd_sub_bytes_q <= '0;
+      end else if (state_we == SP2V_HIGH) begin
+        prd_sub_bytes_q <= prd_sub_bytes_d;
+      end
+    end
+  end
+  
+  
+  logic [WidthPRDData-1:0] prd_sub_bytes;
+  assign prd_sub_bytes = prd_sub_bytes_q;
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  localparam int unsigned WidthPRDRow = 4*WidthPRDSBox;
+  for (genvar i = 0; i < 4; i++) begin : gen_in_mask
+    assign data_in_mask[i] = aes_prd_get_lsbs(prd_sub_bytes[i * WidthPRDRow +: WidthPRDRow]);
+  end
+  
+  
+  assign data_in_mask_o = {data_in_mask[1], data_in_mask[0], data_in_mask[3], data_in_mask[2]};
+  
+  aes_sub_bytes #(
+    .SecSBoxImpl ( SecSBoxImpl )
+  ) u_aes_sub_bytes (
+    .clk_i     ( clk_i             ),
+    .rst_ni    ( rst_ni            ),
+    .en_i      ( sub_bytes_en      ),
+    .out_req_o ( sub_bytes_out_req ),
+    .out_ack_i ( sub_bytes_out_ack ),
+    .op_i      ( op_i              ),
+    .data_i    ( state_q[0]        ),
+    .mask_i    ( sb_in_mask        ),
+    .prd_i     ( prd_sub_bytes_q   ),
+    .data_o    ( sub_bytes_out     ),
+    .mask_o    ( sb_out_mask       ),
+    .err_o     ( sub_bytes_err     )
+  );
+  for (genvar s = 0; s < NumShares; s++) begin : gen_shares_shift_mix
+    if (s == 0) begin : gen_shift_in_data
+      
+      assign shift_rows_in[s] = sub_bytes_out;
+    end else begin : gen_shift_in_mask
+      
+      assign shift_rows_in[s] = sb_out_mask;
+    end
+    aes_shift_rows u_aes_shift_rows (
+      .op_i   ( op_i              ),
+      .data_i ( shift_rows_in[s]  ),
+      .data_o ( shift_rows_out[s] )
+    );
+    aes_mix_columns u_aes_mix_columns (
+      .op_i   ( op_i               ),
+      .data_i ( shift_rows_out[s]  ),
+      .data_o ( mix_columns_out[s] )
+    );
+  end
+  always_comb begin : add_round_key_in_mux
+    unique case (add_rk_sel)
+      ADD_RK_INIT:  add_round_key_in = state_q;
+      ADD_RK_ROUND: add_round_key_in = mix_columns_out;
+      ADD_RK_FINAL: add_round_key_in = shift_rows_out;
+      default:      add_round_key_in = state_q;
+    endcase
+  end
+  for (genvar s = 0; s < NumShares; s++) begin : gen_shares_add_round_key
+    assign add_round_key_out[s] = add_round_key_in[s] ^ round_key[s];
+  end
+  
+  
+  
+  
+  
+  always_comb begin : key_full_mux
+    unique case (key_full_sel)
+      KEY_FULL_ENC_INIT: key_full_d = key_init_i;
+      KEY_FULL_DEC_INIT: key_full_d = !CiphOpFwdOnly ? key_dec_q : prd_clearing_key_i;
+      KEY_FULL_ROUND:    key_full_d = key_expand_out;
+      KEY_FULL_CLEAR:    key_full_d = prd_clearing_key_i;
+      default:           key_full_d = prd_clearing_key_i;
+    endcase
+  end
+  always_ff @(posedge clk_i or negedge rst_ni) begin : key_full_reg
+    if (!rst_ni) begin
+      key_full_q <= '{default: '0};
+    end else if (key_full_we == SP2V_HIGH) begin
+      key_full_q <= key_full_d;
+    end
+  end
+  if (!CiphOpFwdOnly) begin : gen_key_dec
+    
+    
+    always_comb begin : key_dec_mux
+      unique case (key_dec_sel)
+        KEY_DEC_EXPAND: key_dec_d = key_expand_out;
+        KEY_DEC_CLEAR:  key_dec_d = prd_clearing_key_i;
+        default:        key_dec_d = prd_clearing_key_i;
+      endcase
+    end
+    always_ff @(posedge clk_i or negedge rst_ni) begin : key_dec_reg
+      if (!rst_ni) begin
+        key_dec_q <= '{default: '0};
+      end else if (key_dec_we == SP2V_HIGH) begin
+        key_dec_q <= key_dec_d;
+      end
+    end
+  end else begin : gen_no_key_dec
+    
+    assign key_dec_q = '{default: '0};
+    assign key_dec_d = key_dec_q;
+    
+    logic unused_key_dec;
+    always_comb begin
+      unused_key_dec = ^{key_dec_sel, key_dec_we};
+      for (int s = 0; s < NumShares; s++) begin
+        unused_key_dec ^= ^{key_dec_d[s]};
+      end
+    end
+  end
+  
+  
+  assign key_expand_prd_we = (key_full_we == SP2V_HIGH) ? 1'b1 : 1'b0;
+  
+  aes_key_expand #(
+    .AES192Enable ( AES192Enable ),
+    .SecMasking   ( SecMasking   ),
+    .SecSBoxImpl  ( SecSBoxImpl  )
+  ) u_aes_key_expand (
+    .clk_i       ( clk_i              ),
+    .rst_ni      ( rst_ni             ),
+    .cfg_valid_i ( cfg_valid          ),
+    .op_i        ( key_expand_op      ),
+    .en_i        ( key_expand_en      ),
+    .prd_we_i    ( key_expand_prd_we  ),
+    .out_req_o   ( key_expand_out_req ),
+    .out_ack_i   ( key_expand_out_ack ),
+    .clear_i     ( key_expand_clear   ),
+    .round_i     ( key_expand_round   ),
+    .key_len_i   ( key_len_i          ),
+    .key_i       ( key_full_q         ),
+    .key_o       ( key_expand_out     ),
+    .prd_i       ( prd_key_expand     ),
+    .err_o       ( key_expand_err     )
+  );
+  for (genvar s = 0; s < NumShares; s++) begin : gen_shares_round_key
+    always_comb begin : key_words_mux
+      unique case (key_words_sel)
+        KEY_WORDS_0123: key_words[s] = key_full_q[s][3:0];
+        KEY_WORDS_2345: key_words[s] = AES192Enable ? key_full_q[s][5:2] : '0;
+        KEY_WORDS_4567: key_words[s] = key_full_q[s][7:4];
+        KEY_WORDS_ZERO: key_words[s] = '0;
+        default:        key_words[s] = '0;
+      endcase
+    end
+    
+    assign key_bytes[s] = aes_transpose(key_words[s]);
+    aes_mix_columns u_aes_key_mix_columns (
+      .op_i   ( CIPH_INV               ),
+      .data_i ( key_bytes[s]           ),
+      .data_o ( key_mix_columns_out[s] )
+    );
+  end
+  always_comb begin : round_key_mux
+    unique case (round_key_sel)
+      ROUND_KEY_DIRECT: round_key = key_bytes;
+      ROUND_KEY_MIXED:  round_key = !CiphOpFwdOnly ? key_mix_columns_out : key_bytes;
+      default:          round_key = key_bytes;
+    endcase
+  end
+  if (CiphOpFwdOnly) begin : gen_unused_key_mix_columns_out
+    
+    logic unused_key_mix_columns_out;
+    always_comb begin
+      unused_key_mix_columns_out = 1'b0;
+      for (int s = 0; s < NumShares; s++) begin
+        unused_key_mix_columns_out ^= ^{key_mix_columns_out[s]};
+      end
+    end
+  end
+  
+  
+  
+  
+  aes_cipher_control #(
+    .CiphOpFwdOnly ( CiphOpFwdOnly ),
+    .SecMasking    ( SecMasking    ),
+    .SecSBoxImpl   ( SecSBoxImpl   )
+  ) u_aes_cipher_control (
+    .clk_i                ( clk_i               ),
+    .rst_ni               ( rst_ni              ),
+    .in_valid_i           ( in_valid_i          ),
+    .in_ready_o           ( in_ready_o          ),
+    .out_valid_o          ( out_valid_o         ),
+    .out_ready_i          ( out_ready_i         ),
+    .cfg_valid_i          ( cfg_valid           ),
+    .op_i                 ( op_i                ),
+    .key_len_i            ( key_len_i           ),
+    .crypt_i              ( crypt_i             ),
+    .crypt_o              ( crypt_o             ),
+    .dec_key_gen_i        ( dec_key_gen_i       ),
+    .dec_key_gen_o        ( dec_key_gen_o       ),
+    .prng_reseed_i        ( prng_reseed_i       ),
+    .prng_reseed_o        ( prng_reseed_o       ),
+    .key_clear_i          ( key_clear_i         ),
+    .key_clear_o          ( key_clear_o         ),
+    .data_out_clear_i     ( data_out_clear_i    ),
+    .data_out_clear_o     ( data_out_clear_o    ),
+    .mux_sel_err_i        ( mux_sel_err         ),
+    .sp_enc_err_i         ( sp_enc_err_q        ),
+    .op_err_i             ( op_err              ),
+    .alert_fatal_i        ( alert_fatal_i       ),
+    .alert_o              ( alert_o             ),
+    .prng_update_o        ( prd_masking_upd     ),
+    .prng_reseed_req_o    ( prd_masking_rsd_req ),
+    .prng_reseed_ack_i    ( prd_masking_rsd_ack ),
+    .state_sel_o          ( state_sel_ctrl      ),
+    .state_we_o           ( state_we_ctrl       ),
+    .sub_bytes_en_o       ( sub_bytes_en        ),
+    .sub_bytes_out_req_i  ( sub_bytes_out_req   ),
+    .sub_bytes_out_ack_o  ( sub_bytes_out_ack   ),
+    .add_rk_sel_o         ( add_rk_sel_ctrl     ),
+    .key_expand_op_o      ( key_expand_op       ),
+    .key_full_sel_o       ( key_full_sel_ctrl   ),
+    .key_full_we_o        ( key_full_we_ctrl    ),
+    .key_dec_sel_o        ( key_dec_sel_ctrl    ),
+    .key_dec_we_o         ( key_dec_we_ctrl     ),
+    .key_expand_en_o      ( key_expand_en       ),
+    .key_expand_out_req_i ( key_expand_out_req  ),
+    .key_expand_out_ack_o ( key_expand_out_ack  ),
+    .key_expand_clear_o   ( key_expand_clear    ),
+    .key_expand_round_o   ( key_expand_round    ),
+    .key_words_sel_o      ( key_words_sel_ctrl  ),
+    .round_key_sel_o      ( round_key_sel_ctrl  )
+  );
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  aes_sel_buf_chk #(
+    .Num      ( StateSelNum   ),
+    .Width    ( StateSelWidth ),
+    .EnSecBuf ( 1'b1          )
+  ) u_aes_state_sel_buf_chk (
+    .clk_i  ( clk_i          ),
+    .rst_ni ( rst_ni         ),
+    .sel_i  ( state_sel_ctrl ),
+    .sel_o  ( state_sel_raw  ),
+    .err_o  ( state_sel_err  )
+  );
+  assign state_sel = state_sel_e'(state_sel_raw);
+  aes_sel_buf_chk #(
+    .Num      ( AddRKSelNum   ),
+    .Width    ( AddRKSelWidth ),
+    .EnSecBuf ( 1'b1          )
+  ) u_aes_add_rk_sel_buf_chk (
+    .clk_i  ( clk_i           ),
+    .rst_ni ( rst_ni          ),
+    .sel_i  ( add_rk_sel_ctrl ),
+    .sel_o  ( add_rk_sel_raw  ),
+    .err_o  ( add_rk_sel_err  )
+  );
+  assign add_rk_sel = add_rk_sel_e'(add_rk_sel_raw);
+  aes_sel_buf_chk #(
+    .Num      ( KeyFullSelNum   ),
+    .Width    ( KeyFullSelWidth ),
+    .EnSecBuf ( 1'b1            )
+  ) u_aes_key_full_sel_buf_chk (
+    .clk_i  ( clk_i             ),
+    .rst_ni ( rst_ni            ),
+    .sel_i  ( key_full_sel_ctrl ),
+    .sel_o  ( key_full_sel_raw  ),
+    .err_o  ( key_full_sel_err  )
+  );
+  assign key_full_sel = key_full_sel_e'(key_full_sel_raw);
+  aes_sel_buf_chk #(
+    .Num      ( KeyDecSelNum   ),
+    .Width    ( KeyDecSelWidth ),
+    .EnSecBuf ( 1'b1           )
+  ) u_aes_key_dec_sel_buf_chk (
+    .clk_i  ( clk_i            ),
+    .rst_ni ( rst_ni           ),
+    .sel_i  ( key_dec_sel_ctrl ),
+    .sel_o  ( key_dec_sel_raw  ),
+    .err_o  ( key_dec_sel_err  )
+  );
+  assign key_dec_sel = key_dec_sel_e'(key_dec_sel_raw);
+  aes_sel_buf_chk #(
+    .Num      ( KeyWordsSelNum   ),
+    .Width    ( KeyWordsSelWidth ),
+    .EnSecBuf ( 1'b1             )
+  ) u_aes_key_words_sel_buf_chk (
+    .clk_i  ( clk_i              ),
+    .rst_ni ( rst_ni             ),
+    .sel_i  ( key_words_sel_ctrl ),
+    .sel_o  ( key_words_sel_raw  ),
+    .err_o  ( key_words_sel_err  )
+  );
+  assign key_words_sel = key_words_sel_e'(key_words_sel_raw);
+  aes_sel_buf_chk #(
+    .Num      ( RoundKeySelNum   ),
+    .Width    ( RoundKeySelWidth ),
+    .EnSecBuf ( 1'b1             )
+  ) u_aes_round_key_sel_buf_chk (
+    .clk_i  ( clk_i              ),
+    .rst_ni ( rst_ni             ),
+    .sel_i  ( round_key_sel_ctrl ),
+    .sel_o  ( round_key_sel_raw  ),
+    .err_o  ( round_key_sel_err  )
+  );
+  assign round_key_sel = round_key_sel_e'(round_key_sel_raw);
+  
+  assign mux_sel_err = state_sel_err | add_rk_sel_err | key_full_sel_err |
+      key_dec_sel_err | key_words_sel_err | round_key_sel_err;
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  localparam int unsigned NumSp2VSig = 3;
+  sp2v_e [NumSp2VSig-1:0]                sp2v_sig;
+  sp2v_e [NumSp2VSig-1:0]                sp2v_sig_chk;
+  logic  [NumSp2VSig-1:0][Sp2VWidth-1:0] sp2v_sig_chk_raw;
+  logic  [NumSp2VSig-1:0]                sp2v_sig_err;
+  assign sp2v_sig[0] = state_we_ctrl;
+  assign sp2v_sig[1] = key_full_we_ctrl;
+  assign sp2v_sig[2] = key_dec_we_ctrl;
+  
+  localparam bit [NumSp2VSig-1:0] Sp2VEnSecBuf = {NumSp2VSig{1'b1}};
+  
+  for (genvar i = 0; i < NumSp2VSig; i++) begin : gen_sel_buf_chk
+    aes_sel_buf_chk #(
+      .Num      ( Sp2VNum         ),
+      .Width    ( Sp2VWidth       ),
+      .EnSecBuf ( Sp2VEnSecBuf[i] )
+    ) u_aes_sp2v_sig_buf_chk_i (
+      .clk_i  ( clk_i               ),
+      .rst_ni ( rst_ni              ),
+      .sel_i  ( sp2v_sig[i]         ),
+      .sel_o  ( sp2v_sig_chk_raw[i] ),
+      .err_o  ( sp2v_sig_err[i]     )
+    );
+    assign sp2v_sig_chk[i] = sp2v_e'(sp2v_sig_chk_raw[i]);
+  end
+  assign state_we    = sp2v_sig_chk[0];
+  assign key_full_we = sp2v_sig_chk[1];
+  assign key_dec_we  = sp2v_sig_chk[2];
+  
+  
+  
+  assign sp_enc_err_d = |sp2v_sig_err | sub_bytes_err | key_expand_err;
+  
+  
+  always_ff @(posedge clk_i or negedge rst_ni) begin : reg_sp_enc_err
+    if (!rst_ni) begin
+      sp_enc_err_q <= 1'b0;
+    end else if (sp_enc_err_d) begin
+      sp_enc_err_q <= 1'b1;
+    end
+  end
+  
+  
+  
+  
+  assign state_o = add_round_key_out;
+  
+  
+  
+`ifdef INC_ASSERT
+  
+  
+  
+  `ASSERT_STATIC_LINT_ERROR(AesSecMaskingNonDefault, SecMasking == 1)
+  
+  `ASSERT_INIT(AesMaskedCoreAndSBox,
+      (SecMasking &&
+      (SecSBoxImpl == SBoxImplCanrightMasked ||
+       SecSBoxImpl == SBoxImplCanrightMaskedNoreuse ||
+       SecSBoxImpl == SBoxImplDom)) ||
+      (!SecMasking &&
+      (SecSBoxImpl == SBoxImplLut ||
+       SecSBoxImpl == SBoxImplCanright)))
+  
+  logic prd_clearing_equals_output, unused_prd_clearing_equals_output;
+  assign prd_clearing_equals_output = (prd_clearing_state_i == add_round_key_out);
+  assign unused_prd_clearing_equals_output = prd_clearing_equals_output;
+  
+  
+  
+  
+  
+  
+  `ASSERT(AesSecCmDataRegKeySca, (state_we == SP2V_HIGH) &&
+      ((key_len_i == AES_128 && u_aes_cipher_control.rnd_ctr == 4'd10) ||
+       (key_len_i == AES_192 && u_aes_cipher_control.rnd_ctr == 4'd12) ||
+       (key_len_i == AES_256 && u_aes_cipher_control.rnd_ctr == 4'd14)) |=>
+      (state_q != $past(add_round_key_out)) ||
+      (state_q == $past(state_init_i)) ||
+      $past(prd_clearing_equals_output) || alert_o)
+  if (SecMasking) begin : gen_sec_cm_key_masking_svas
+      
+      localparam int unsigned NumCyclesPerRound = (SecSBoxImpl == SBoxImplDom) ? 5 : 1;
+      logic unused_param;
+      assign unused_param = (NumCyclesPerRound == 1);
+      
+      
+      
+      
+      
+      `ASSERT(AesSecCmKeyMaskingPrdSubBytes,
+          sub_bytes_en == SP2V_HIGH && ($past(sub_bytes_en) == SP2V_LOW ||
+              ($past(sub_bytes_out_req) == SP2V_HIGH &&
+               $past(sub_bytes_out_ack) == SP2V_HIGH)) |=>
+          $past(prd_sub_bytes_q) != $past(prd_sub_bytes_q, NumCyclesPerRound + 1) ||
+          SecAllowForcingMasks && force_masks_i)
+      
+      
+      
+      
+      
+      
+      `ASSERT(AesSecCmKeyMaskingInitialPrngUpdateSubBytes,
+          sub_bytes_en == SP2V_HIGH && $past(sub_bytes_en) == SP2V_LOW |=>
+          (key_len_i == AES_256 &&
+              $past(prd_masking) != $past(prd_masking, 3)) ||
+          ((key_len_i == AES_128 || key_len_i == AES_192) &&
+              $past(prd_masking) != $past(prd_masking, NumCyclesPerRound + 2)) ||
+          (SecAllowForcingMasks && force_masks_i))
+      `ASSERT(AesSecCmKeyMaskingInitialPrngUpdateKeyExpand,
+          key_expand_en == SP2V_HIGH && $past(key_expand_en) == SP2V_LOW |=>
+          (key_len_i == AES_256 &&
+              $past(prd_masking) != $past(prd_masking, 3)) ||
+          ((key_len_i == AES_128 || key_len_i == AES_192) &&
+              $past(prd_masking) != $past(prd_masking, 2)) ||
+          (SecAllowForcingMasks && force_masks_i) || dec_key_gen_o == SP2V_HIGH)
+      
+      
+      
+      
+      for (genvar s = 0; s < NumShares; s++) begin : gen_sec_cm_key_masking_share_svas
+        `ASSERT(AesSecCmKeyMaskingStateShare, state_we == SP2V_HIGH &&
+            (crypt_i == SP2V_HIGH || crypt_o == SP2V_HIGH) |=>
+            state_q[s] != $past(state_q[s], NumCyclesPerRound) ||
+            $past(state_q[s], NumCyclesPerRound) != $past(state_q[s], 2*NumCyclesPerRound) ||
+            (SecAllowForcingMasks && force_masks_i) || dec_key_gen_o == SP2V_HIGH)
+        `ASSERT(AesSecCmKeyMaskingOutputShare,
+            (out_valid_o == SP2V_HIGH && $past(out_valid_o) == SP2V_LOW) &&
+            (crypt_o == SP2V_HIGH) |=>
+            $past(state_o[s]) != $past(state_q[s], NumCyclesPerRound) ||
+            $past(state_q[s], NumCyclesPerRound) != $past(state_q[s], 2*NumCyclesPerRound) ||
+            (SecAllowForcingMasks && force_masks_i) || dec_key_gen_o == SP2V_HIGH)
+      end
+  end
+  
+  
+  if (WidthPRDSBox > 8) begin : gen_prd_extract_assert
+    
+    
+    function automatic logic [3:0][(WidthPRDSBox-8)-1:0] aes_prd_get_msbs(
+      logic [(4*WidthPRDSBox)-1:0] in
+    );
+      logic [3:0][(WidthPRDSBox-8)-1:0] prd_msbs;
+      for (int i = 0; i < 4; i++) begin
+        prd_msbs[i] = in[(i*WidthPRDSBox) + 8 +: (WidthPRDSBox-8)];
+      end
+      return prd_msbs;
+    endfunction
+    
+    
+    
+    function automatic logic [4*WidthPRDSBox-1:0] aes_prd_concat_bits(
+      logic [3:0]                 [7:0] prd_lsbs,
+      logic [3:0][(WidthPRDSBox-8)-1:0] prd_msbs
+    );
+      logic [(4*WidthPRDSBox)-1:0] prd;
+      for (int i = 0; i < 4; i++) begin
+        prd[(i*WidthPRDSBox) +: WidthPRDSBox] = {prd_msbs[i], prd_lsbs[i]};
+      end
+      return prd;
+    endfunction
+    
+    logic            [WidthPRDMasking-1:0] unused_prd_masking;
+    logic [3:0][3:0][(WidthPRDSBox-8)-1:0] unused_prd_msbs;
+    for (genvar i = 0; i < 4; i++) begin : gen_unused_prd_msbs
+      assign unused_prd_msbs[i] = aes_prd_get_msbs(prd_masking[i * WidthPRDRow +: WidthPRDRow]);
+    end
+    for (genvar i = 0; i < 4; i++) begin : gen_unused_prd_masking
+      assign unused_prd_masking[i * WidthPRDRow +: WidthPRDRow] =
+          aes_prd_concat_bits(data_in_mask[i], unused_prd_msbs[i]);
+    end
+    assign unused_prd_masking[WidthPRDMasking-1 -: WidthPRDKey] = prd_key_expand;
+    `ASSERT(AesMskgPrdExtraction, prd_masking == unused_prd_masking)
+  end
+  
+  
+`endif
+endmodule
+
+`ifndef PRIM_ASSERT_SV
+`define PRIM_ASSERT_SV
+`define ASSERT_DEFAULT_CLK clk_i
+`define ASSERT_DEFAULT_RST !rst_ni
+`define PRIM_STRINGIFY(__x) `"__x`"
+`define ASSERT_ERROR(__name)                                                             \
+`ifdef UVM                                                                               \
+  uvm_pkg::uvm_report_error("ASSERT FAILED", `PRIM_STRINGIFY(__name), uvm_pkg::UVM_NONE, \
+                            `__FILE__, `__LINE__, "", 1);                                \
+`else                                                                                    \
+  $error("%0t: (%0s:%0d) [%m] [ASSERT FAILED] %0s", $time, `__FILE__, `__LINE__,         \
+         `PRIM_STRINGIFY(__name));                                                       \
+`endif
+`define ASSERT_STATIC_LINT_ERROR(__name, __prop)     \
+  localparam int __name = (__prop) ? 1 : 2;          \
+  always_comb begin                                  \
+    logic unused_assert_static_lint_error;           \
+    unused_assert_static_lint_error = __name'(1'b1); \
+  end
+`define ASSERT_STATIC_IN_PACKAGE(__name, __prop)              \
+  function automatic bit assert_static_in_package_``__name(); \
+    bit unused_bit [((__prop) ? 1 : -1)];                     \
+    unused_bit = '{default: 1'b0};                            \
+    return unused_bit[0];                                     \
+  endfunction
+`ifdef VERILATOR
+ `include "prim_assert_dummy_macros.svh"`elsif SYNTHESIS
+ `include "prim_assert_dummy_macros.svh"`elsif YOSYS
+ `include "prim_assert_yosys_macros.svh"
+ `define INC_ASSERT`else
+ 
+`define ASSERT_I(__name, __prop) \
+  __name: assert (__prop)        \
+    else begin                   \
+      `ASSERT_ERROR(__name)      \
+    end
+`define ASSERT_INIT(__name, __prop)                                                  \
+`ifdef FPV_ON                                                                        \
+  if (!(__prop)) $fatal(2, "Fatal static assertion [%s]: (%s) is not true.",         \
+                        (__name), (__prop));                                         \
+`else                                                                                \
+  initial begin                                                                      \
+    __name: assert (__prop)                                                          \
+      else begin                                                                     \
+        `ASSERT_ERROR(__name)                                                        \
+      end                                                                            \
+  end                                                                                \
+`endif
+`define ASSERT_INIT_NET(__name, __prop)                                                   \
+  initial begin                                                                      \
+    
+    
+    
+    #1ps;                                                                            \
+    __name: assert (__prop)                                                          \
+      else begin                                                                     \
+        `ASSERT_ERROR(__name)                                                        \
+      end                                                                            \
+  end                                                                                \
+`define ASSERT_FINAL(__name, __prop)                                         \
+`ifndef FPV_ON                                                               \
+  final begin                                                                \
+    __name: assert (__prop || $test$plusargs("disable_assert_final_checks")) \
+      else begin                                                             \
+        `ASSERT_ERROR(__name)                                                \
+      end                                                                    \
+  end                                                                        \
+`endif
+`define ASSERT_AT_RESET(__name, __prop, __rst = `ASSERT_DEFAULT_RST)          \
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+`ifndef FPV_ON                                                                \
+  __name: assert property (@(posedge __rst) $isunknown(__rst) || (__prop))    \
+`else                                                                         \
+  __name: assert property (@(posedge __rst) (__prop))                         \
+`endif                                                                        \
+    else begin                                                                \
+      `ASSERT_ERROR(__name)                                                   \
+    end
+`define ASSERT_AT_RESET_AND_FINAL(__name, __prop, __rst = `ASSERT_DEFAULT_RST) \
+    `ASSERT_AT_RESET(AtReset_``__name``, __prop, __rst)                        \
+    `ASSERT_FINAL(Final_``__name``, __prop)
+`define ASSERT(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: assert property (@(posedge __clk) disable iff ((__rst) !== '0) (__prop))       \
+    else begin                                                                           \
+      `ASSERT_ERROR(__name)                                                              \
+    end
+`define ASSERT_NEVER(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: assert property (@(posedge __clk) disable iff ((__rst) !== '0) not (__prop))         \
+    else begin                                                                                 \
+      `ASSERT_ERROR(__name)                                                                    \
+    end
+`define ASSERT_KNOWN(__name, __sig, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifndef FPV_ON                                                                                \
+  `ASSERT(__name, !$isunknown(__sig), __clk, __rst)                                           \
+`endif
+`define COVER(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: cover property (@(posedge __clk) disable iff ((__rst) !== '0) (__prop));
+`define ASSUME(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: assume property (@(posedge __clk) disable iff ((__rst) !== '0) (__prop))       \
+    else begin                                                                           \
+      `ASSERT_ERROR(__name)                                                              \
+    end
+`define ASSUME_I(__name, __prop) \
+  __name: assume (__prop)        \
+    else begin                   \
+      `ASSERT_ERROR(__name)      \
+    end
+ `define INC_ASSERT
+`endif
+`define ASSERT_PULSE(__name, __sig, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  `ASSERT(__name, $rose(__sig) |=> !(__sig), __clk, __rst)
+`define ASSERT_IF(__name, __prop, __enable, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  `ASSERT(__name, (__enable) |-> (__prop), __clk, __rst)
+`define ASSERT_KNOWN_IF(__name, __sig, __enable, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifndef FPV_ON                                                                                             \
+  `ASSERT_KNOWN(__name``KnownEnable, __enable, __clk, __rst)                                               \
+  `ASSERT_IF(__name, !$isunknown(__sig), __enable, __clk, __rst)                                           \
+`endif
+`define ASSUME_FPV(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifdef FPV_ON                                                                                \
+   `ASSUME(__name, __prop, __clk, __rst)                                                     \
+`endif
+`define ASSUME_I_FPV(__name, __prop) \
+`ifdef FPV_ON                        \
+   `ASSUME_I(__name, __prop)         \
+`endif
+`define COVER_FPV(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifdef FPV_ON                                                                               \
+   `COVER(__name, __prop, __clk, __rst)                                                     \
+`endif
+`define ASSERT_FPV_LINEAR_FSM(__name, __state, __type, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  `ifdef INC_ASSERT                                                                                              \
+     bit __name``_cond;                                                                                          \
+     always_ff @(posedge __clk or posedge __rst) begin                                                           \
+       if (__rst) begin                                                                                          \
+         __name``_cond <= 0;                                                                                     \
+       end else begin                                                                                            \
+         __name``_cond <= 1;                                                                                     \
+       end                                                                                                       \
+     end                                                                                                         \
+     property __name``_p;                                                                                        \
+       __type initial_state;                                                                                     \
+       (!$stable(__state) & __name``_cond, initial_state = $past(__state)) |->                                   \
+           (__state != initial_state) until !(__name``_cond);                                                    \
+     endproperty                                                                                                 \
+   `ASSERT(__name, __name``_p, __clk, 0)                                                                         \
+  `endif
+`ifndef PRIM_ASSERT_SEC_CM_SVH
+`define PRIM_ASSERT_SEC_CM_SVH
+`define _SEC_CM_ALERT_MAX_CYC 30
+`define ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, ERR_NAME_, CLK_, RST_) \
+  `ASSERT(FpvSecCm``NAME_``,                                                                    \
+          $rose(HIER_.ERR_NAME_) && !(GATE_) |-> ##[0:MAX_CYCLES_] (ERR_),                      \
+          CLK_, RST_)                                                                           \
+  `ifdef INC_ASSERT                                                                             \
+    assign HIER_.unused_assert_connected = 1'b1;                                                \
+  `endif
+`define ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, ERR_NAME_)    \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, (ALERT_.alert_p), GATE_, MAX_CYCLES_, ERR_NAME_, \
+                            `ASSERT_DEFAULT_CLK, `ASSERT_DEFAULT_RST)                      \
+  `ASSUME_FPV(``NAME_``TriggerAfterAlertInit_S,                                            \
+              $stable(rst_ni) == 0 |-> HIER_.ERR_NAME_ == 0 [*10])
+`define ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_IN_, GATE_, MAX_CYCLES_, ERR_NAME_) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ALERT_IN_, GATE_, MAX_CYCLES_, ERR_NAME_,           \
+                            `ASSERT_DEFAULT_CLK, `ASSERT_DEFAULT_RST)
+`define ASSERT_PRIM_COUNT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_DOUBLE_LFSR_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_FSM_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, unused_err_o)
+`define ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_REG_WE_ONEHOT_ERROR_TRIGGER_ALERT(NAME_, REG_TOP_HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT(NAME_, \
+    REG_TOP_HIER_.u_prim_reg_we_check.u_prim_onehot_check, ALERT_, GATE_, MAX_CYCLES_)
+`define ASSERT_PRIM_FIFO_SYNC_SINGLETON_ERROR_TRIGGER_ALERT(NAME, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_COUNT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_DOUBLE_LFSR_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_FSM_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, unused_err_o)
+`define ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_REG_WE_ONEHOT_ERROR_TRIGGER_ALERT_IN(NAME_, REG_TOP_HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT_IN(NAME_, \
+    REG_TOP_HIER_.u_prim_reg_we_check.u_prim_onehot_check, ALERT_, GATE_, MAX_CYCLES_)
+`define ASSERT_PRIM_FIFO_SYNC_SINGLETON_ERROR_TRIGGER_ALERT_IN(NAME, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_FSM_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = 2, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, unused_err_o, CLK_, RST_)
+`define ASSERT_PRIM_COUNT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = 2, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, err_o, CLK_, RST_)
+`define ASSERT_PRIM_DOUBLE_LFSR_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = 2, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, err_o, CLK_, RST_)
+`define ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, err_o, CLK_, RST_)
+`define ASSERT_PRIM_REG_WE_ONEHOT_ERROR_TRIGGER_ERR(NAME_, REG_TOP_HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ERR(NAME_, \
+    REG_TOP_HIER_.u_prim_reg_we_check.u_prim_onehot_check, ERR_, GATE_, MAX_CYCLES_, CLK_, RST_)
+`endif 
+`ifndef PRIM_FLOP_MACROS_SV
+`define PRIM_FLOP_MACROS_SV
+`define PRIM_FLOP_CLK clk_i
+`define PRIM_FLOP_RST rst_ni
+`define PRIM_FLOP_RESVAL '0
+`define PRIM_FLOP_A(__d, __q, __resval = `PRIM_FLOP_RESVAL, __clk = `PRIM_FLOP_CLK, __rst_n = `PRIM_FLOP_RST) \
+  always_ff @(posedge __clk or negedge __rst_n) begin \
+    if (!__rst_n) begin                               \
+      __q <= __resval;                                \
+    end else begin                                    \
+      __q <= __d;                                     \
+    end                                               \
+  end
+`define PRIM_FLOP_SPARSE_FSM(__name, __d, __q, __type, __resval = `PRIM_FLOP_RESVAL, __clk = `PRIM_FLOP_CLK, __rst_n = `PRIM_FLOP_RST, __alert_trigger_sva_en = 1) \
+  `ifdef SIMULATION                                   \
+    prim_sparse_fsm_flop #(                           \
+      .StateEnumT(__type),                            \
+      .Width($bits(__type)),                          \
+      .ResetValue($bits(__type)'(__resval)),          \
+      .EnableAlertTriggerSVA(__alert_trigger_sva_en), \
+      .CustomForceName(`PRIM_STRINGIFY(__q))          \
+    ) __name (                                        \
+      .clk_i   ( __clk   ),                           \
+      .rst_ni  ( __rst_n ),                           \
+      .state_i ( __d     ),                           \
+      .state_o (         )                            \
+    );                                                \
+    `PRIM_FLOP_A(__d, __q, __resval, __clk, __rst_n)  \
+    `ASSERT(``__name``_A, __q === ``__name``.state_o) \
+  `else                                               \
+    prim_sparse_fsm_flop #(                           \
+      .StateEnumT(__type),                            \
+      .Width($bits(__type)),                          \
+      .ResetValue($bits(__type)'(__resval)),          \
+      .EnableAlertTriggerSVA(__alert_trigger_sva_en)  \
+    ) __name (                                        \
+      .clk_i   ( __clk   ),                           \
+      .rst_ni  ( __rst_n ),                           \
+      .state_i ( __d     ),                           \
+      .state_o ( __q     )                            \
+    );                                                \
+  `endif
+`endif 
+`endif 
+module aes_key_expand import aes_pkg::*;
+#(
+  parameter bit         AES192Enable = 1,
+  parameter bit         SecMasking   = 0,
+  parameter sbox_impl_e SecSBoxImpl  = SBoxImplLut,
+  localparam int        NumShares    = SecMasking ? 2 : 1 
+) (
+  input  logic                   clk_i,
+  input  logic                   rst_ni,
+  input  logic                   cfg_valid_i,
+  input  ciph_op_e               op_i,
+  input  sp2v_e                  en_i,
+  input  logic                   prd_we_i,
+  output sp2v_e                  out_req_o,
+  input  sp2v_e                  out_ack_i,
+  input  logic                   clear_i,
+  input  logic             [3:0] round_i,
+  input  key_len_e               key_len_i,
+  input  logic       [7:0][31:0] key_i [NumShares],
+  output logic       [7:0][31:0] key_o [NumShares],
+  input  logic [WidthPRDKey-1:0] prd_i,
+  output logic                   err_o
+);
+  sp2v_e            en;
+  logic             en_err;
+  sp2v_e            out_ack;
+  logic             out_ack_err;
+  logic       [7:0] rcon_d, rcon_q;
+  logic             rcon_we;
+  logic             use_rcon;
+  logic       [3:0] rnd;
+  logic       [3:0] rnd_type;
+  logic      [31:0] spec_in_128 [NumShares];
+  logic      [31:0] spec_in_192 [NumShares];
+  logic      [31:0] rot_word_in [NumShares];
+  logic      [31:0] rot_word_out [NumShares];
+  logic             use_rot_word;
+  logic             prd_we, prd_we_force, prd_we_inhibit;
+  logic      [31:0] sub_word_in, sub_word_out;
+  logic       [3:0] sub_word_out_req;
+  logic      [31:0] sw_in_mask, sw_out_mask;
+  logic       [7:0] rcon_add_in, rcon_add_out;
+  logic      [31:0] rcon_added;
+  logic      [31:0] irregular [NumShares];
+  logic [7:0][31:0] regular [NumShares];
+  
+  logic                     unused_cfg_valid;
+  assign unused_cfg_valid = cfg_valid_i;
+  
+  assign rnd = round_i;
+  
+  always_comb begin : get_rnd_type
+    if (AES192Enable) begin
+      rnd_type[0] = (rnd == 0);
+      rnd_type[1] = (rnd == 1 || rnd == 4 || rnd == 7 || rnd == 10);
+      rnd_type[2] = (rnd == 2 || rnd == 5 || rnd == 8 || rnd == 11);
+      rnd_type[3] = (rnd == 3 || rnd == 6 || rnd == 9 || rnd == 12);
+    end else begin
+      rnd_type = '0;
+    end
+  end
+  
+  
+  
+  
+  assign use_rot_word = (key_len_i == AES_256 && rnd[0] == 1'b0) ? 1'b0 : 1'b1;
+  
+  always_comb begin : rcon_usage
+    use_rcon = 1'b1;
+    if (AES192Enable) begin
+      if (key_len_i == AES_192 &&
+          ((op_i == CIPH_FWD &&  rnd_type[1]) ||
+           (op_i == CIPH_INV && (rnd_type[0] || rnd_type[3])))) begin
+        use_rcon = 1'b0;
+      end
+    end
+    if (key_len_i == AES_256 && rnd[0] == 1'b0) begin
+      use_rcon = 1'b0;
+    end
+  end
+  
+  always_comb begin : rcon_update
+    rcon_d = rcon_q;
+    if (clear_i) begin
+      rcon_d = (op_i == CIPH_FWD)                            ? 8'h01 :
+              ((op_i == CIPH_INV) && (key_len_i == AES_128)) ? 8'h36 :
+              ((op_i == CIPH_INV) && (key_len_i == AES_192)) ? 8'h80 :
+              ((op_i == CIPH_INV) && (key_len_i == AES_256)) ? 8'h40 : 8'h01;
+    end else begin
+      rcon_d = (op_i == CIPH_FWD) ? aes_mul2(rcon_q) :
+               (op_i == CIPH_INV) ? aes_div2(rcon_q) : 8'h01;
+    end
+  end
+  
+  assign rcon_we = clear_i | use_rcon &
+      (en == SP2V_HIGH) & (out_req_o == SP2V_HIGH) & (out_ack == SP2V_HIGH);
+  
+  always_ff @(posedge clk_i or negedge rst_ni) begin : reg_rcon
+    if (!rst_ni) begin
+      rcon_q <= '0;
+    end else if (rcon_we) begin
+      rcon_q <= rcon_d;
+    end
+  end
+  for (genvar s = 0; s < NumShares; s++) begin : gen_shares_rot_word_out
+    
+    assign spec_in_128[s] = key_i[s][3] ^ key_i[s][2];
+    assign spec_in_192[s] = AES192Enable ? key_i[s][5] ^ key_i[s][1] ^ key_i[s][0] : '0;
+    
+    always_comb begin : rot_word_in_mux
+      unique case (key_len_i)
+        
+        
+        
+        AES_128: begin
+          unique case (op_i)
+            CIPH_FWD: rot_word_in[s] = key_i[s][3];
+            CIPH_INV: rot_word_in[s] = spec_in_128[s];
+            default:  rot_word_in[s] = key_i[s][3];
+          endcase
+        end
+        
+        
+        
+        AES_192: begin
+          if (AES192Enable) begin
+            unique case (op_i)
+              CIPH_FWD: begin
+                rot_word_in[s] = rnd_type[0] ? key_i[s][5]    :
+                                 rnd_type[2] ? key_i[s][5]    :
+                                 rnd_type[3] ? spec_in_192[s] : key_i[s][3];
+              end
+              CIPH_INV: begin
+                rot_word_in[s] = rnd_type[1] ? key_i[s][3] :
+                                 rnd_type[2] ? key_i[s][1] : key_i[s][3];
+              end
+              default: rot_word_in[s] = key_i[s][3];
+            endcase
+          end else begin
+            rot_word_in[s] = key_i[s][3];
+          end
+        end
+        
+        
+        
+        AES_256: begin
+          unique case (op_i)
+            CIPH_FWD: rot_word_in[s] = key_i[s][7];
+            CIPH_INV: rot_word_in[s] = key_i[s][3];
+            default:  rot_word_in[s] = key_i[s][7];
+          endcase
+        end
+        default: rot_word_in[s] = key_i[s][3];
+      endcase
+    end
+    
+    assign rot_word_out[s] = aes_circ_byte_shift(rot_word_in[s], 2'h3);
+  end
+  
+  assign sub_word_in = use_rot_word ? rot_word_out[0] : rot_word_in[0];
+  
+  if (!SecMasking) begin : gen_no_sw_in_mask
+    
+    assign sw_in_mask  = '0;
+    
+    logic [31:0] unused_sw_out_mask;
+    assign unused_sw_out_mask = sw_out_mask;
+  end else begin : gen_sw_in_mask
+    
+    assign sw_in_mask = use_rot_word ? rot_word_out[1] : rot_word_in[1];
+  end
+  
+  
+  
+  
+  
+  
+  assign prd_we_force = (key_len_i == AES_256) & (rnd == 0);
+  assign prd_we_inhibit = (key_len_i == AES_192) & (op_i == CIPH_FWD) &
+      (rnd == 0 || rnd == 3 || rnd == 6 || rnd == 9);
+  assign prd_we = (prd_we_i & ~prd_we_inhibit) | prd_we_force;
+  
+  logic [WidthPRDKey-1:0] prd_q;
+  if (!SecMasking) begin : gen_no_prd_buffer
+    
+    assign prd_q = prd_i;
+    
+    logic unused_prd_we;
+    assign unused_prd_we = prd_we;
+  end else begin : gen_prd_buffer
+    
+    
+    
+    
+    
+    always_ff @(posedge clk_i or negedge rst_ni) begin : prd_reg
+      if (!rst_ni) begin
+        prd_q <= '0;
+      end else if (prd_we) begin
+        prd_q <= prd_i;
+      end
+    end
+  end
+  
+  
+  
+  
+  logic [3:0][WidthPRDSBox+19:0] in_prd;
+  logic [3:0]             [19:0] out_prd;
+  for (genvar i = 0; i < 4; i++) begin : gen_sbox
+    
+    
+    assign in_prd[i] = {out_prd[aes_rot_int(i,4)], prd_q[WidthPRDSBox*i +: WidthPRDSBox]};
+    aes_sbox #(
+      .SecSBoxImpl ( SecSBoxImpl )
+    ) u_aes_sbox_i (
+      .clk_i     ( clk_i                  ),
+      .rst_ni    ( rst_ni                 ),
+      .en_i      ( en == SP2V_HIGH        ),
+      .out_req_o ( sub_word_out_req[i]    ),
+      .out_ack_i ( out_ack == SP2V_HIGH   ),
+      .op_i      ( CIPH_FWD               ),
+      .data_i    ( sub_word_in[8*i +: 8]  ),
+      .mask_i    ( sw_in_mask[8*i +: 8]   ),
+      .prd_i     ( in_prd[i]              ),
+      .data_o    ( sub_word_out[8*i +: 8] ),
+      .mask_o    ( sw_out_mask[8*i +: 8]  ),
+      .prd_o     ( out_prd[i]             )
+    );
+  end
+  
+  assign rcon_add_in  = sub_word_out[7:0];
+  assign rcon_add_out = rcon_add_in ^ rcon_q;
+  assign rcon_added   = {sub_word_out[31:8], rcon_add_out};
+  
+  for (genvar s = 0; s < NumShares; s++) begin : gen_shares_irregular
+    if (s == 0) begin : gen_irregular_rcon
+      
+      assign irregular[s] = use_rcon ? rcon_added : sub_word_out;
+    end else begin : gen_irregular_no_rcon
+      
+      assign irregular[s] = sw_out_mask;
+    end
+  end
+  
+  
+  
+  
+  
+  for (genvar s = 0; s < NumShares; s++) begin : gen_shares_regular
+    always_comb begin : drive_regular
+      unique case (key_len_i)
+        
+        
+        
+        AES_128: begin
+          
+          regular[s][7:4] = key_i[s][3:0];
+          regular[s][0] = irregular[s] ^ key_i[s][0];
+          unique case (op_i)
+            CIPH_FWD: begin
+              for (int i = 1; i < 4; i++) begin
+                regular[s][i] = regular[s][i-1] ^ key_i[s][i];
+              end
+            end
+            CIPH_INV: begin
+              for (int i = 1; i < 4; i++) begin
+                regular[s][i] = key_i[s][i-1] ^ key_i[s][i];
+              end
+            end
+            default: regular[s] = {key_i[s][3:0], key_i[s][7:4]};
+          endcase
+        end
+        
+        
+        
+        AES_192: begin
+          
+          regular[s][7:6] = key_i[s][3:2];
+          if (AES192Enable) begin
+            unique case (op_i)
+              CIPH_FWD: begin
+                if (rnd_type[0]) begin
+                  
+                  regular[s][3:0] = key_i[s][5:2];
+                  
+                  regular[s][4]   = irregular[s]  ^ key_i[s][0];
+                  regular[s][5]   = regular[s][4] ^ key_i[s][1];
+                end else begin
+                  
+                  regular[s][1:0] = key_i[s][5:4];
+                  
+                  for (int i = 0; i < 4; i++) begin
+                    if ((i == 0 && rnd_type[2]) ||
+                        (i == 2 && rnd_type[3])) begin
+                      regular[s][i+2] = irregular[s]    ^ key_i[s][i];
+                    end else begin
+                      regular[s][i+2] = regular[s][i+1] ^ key_i[s][i];
+                    end
+                  end
+                end 
+              end
+              CIPH_INV: begin
+                if (rnd_type[0]) begin
+                  
+                  regular[s][5:2] = key_i[s][3:0];
+                  
+                  for (int i = 0; i < 2; i++) begin
+                    regular[s][i] = key_i[s][3+i] ^ key_i[s][3+i+1];
+                  end
+                end else begin
+                  
+                  regular[s][5:4] = key_i[s][1:0];
+                  
+                  for (int i = 0; i < 4; i++) begin
+                    if ((i == 2 && rnd_type[1]) ||
+                        (i == 0 && rnd_type[2])) begin
+                      regular[s][i] = irregular[s]  ^ key_i[s][i+2];
+                    end else begin
+                      regular[s][i] = key_i[s][i+1] ^ key_i[s][i+2];
+                    end
+                  end
+                end 
+              end
+              default: regular[s] = {key_i[s][3:0], key_i[s][7:4]};
+            endcase
+          end else begin
+            regular[s] = {key_i[s][3:0], key_i[s][7:4]};
+          end 
+        end
+        
+        
+        
+        AES_256: begin
+          unique case (op_i)
+            CIPH_FWD: begin
+              if (rnd == 0) begin
+                
+                
+                regular[s] = {key_i[s][3:0], key_i[s][7:4]};
+              end else begin
+                
+                regular[s][3:0] = key_i[s][7:4];
+                
+                regular[s][4]   = irregular[s] ^ key_i[s][0];
+                for (int i = 1; i < 4; i++) begin
+                  regular[s][i+4] = regular[s][i+4-1] ^ key_i[s][i];
+                end
+              end 
+            end
+            CIPH_INV: begin
+              if (rnd == 0) begin
+                
+                
+                regular[s] = {key_i[s][3:0], key_i[s][7:4]};
+              end else begin
+                
+                regular[s][7:4] = key_i[s][3:0];
+                
+                regular[s][0]   = irregular[s] ^ key_i[s][4];
+                for (int i = 0; i < 3; i++) begin
+                  regular[s][i+1] = key_i[s][4+i] ^ key_i[s][4+i+1];
+                end
+              end 
+            end
+            default: regular[s] = {key_i[s][3:0], key_i[s][7:4]};
+          endcase
+        end
+        default: regular[s] = {key_i[s][3:0], key_i[s][7:4]};
+      endcase 
+    end 
+  end 
+  
+  assign key_o     = regular;
+  assign out_req_o = &sub_word_out_req ? SP2V_HIGH : SP2V_LOW;
+  
+  
+  
+  logic [Sp2VWidth-1:0] en_raw;
+  aes_sel_buf_chk #(
+    .Num      ( Sp2VNum   ),
+    .Width    ( Sp2VWidth ),
+    .EnSecBuf ( 1'b1      )
+  ) u_aes_key_expand_en_buf_chk (
+    .clk_i  ( clk_i  ),
+    .rst_ni ( rst_ni ),
+    .sel_i  ( en_i   ),
+    .sel_o  ( en_raw ),
+    .err_o  ( en_err )
+  );
+  assign en = sp2v_e'(en_raw);
+  logic [Sp2VWidth-1:0] out_ack_raw;
+  aes_sel_buf_chk #(
+    .Num      ( Sp2VNum   ),
+    .Width    ( Sp2VWidth ),
+    .EnSecBuf ( 1'b1      )
+  ) u_aes_key_expand_out_ack_buf_chk (
+    .clk_i  ( clk_i       ),
+    .rst_ni ( rst_ni      ),
+    .sel_i  ( out_ack_i   ),
+    .sel_o  ( out_ack_raw ),
+    .err_o  ( out_ack_err )
+  );
+  assign out_ack = sp2v_e'(out_ack_raw);
+  
+  assign err_o = en_err | out_ack_err;
+  
+  
+  
+  
+  `ASSERT_STATIC_LINT_ERROR(AesKeyExpandSecMaskingNonDefault, SecMasking == 1)
+  
+  `ASSERT_INIT(AesMaskedCoreAndSBox,
+      (SecMasking &&
+      (SecSBoxImpl == SBoxImplCanrightMasked ||
+       SecSBoxImpl == SBoxImplCanrightMaskedNoreuse ||
+       SecSBoxImpl == SBoxImplDom)) ||
+      (!SecMasking &&
+      (SecSBoxImpl == SBoxImplLut ||
+       SecSBoxImpl == SBoxImplCanright)))
+  
+  `ASSERT(AesCiphOpValid, cfg_valid_i |-> op_i inside {
+      CIPH_FWD,
+      CIPH_INV
+      })
+  `ASSERT(AesKeyLenValid, cfg_valid_i |-> key_len_i inside {
+      AES_128,
+      AES_192,
+      AES_256
+      })
+endmodule
+
+module aes_mix_columns (
+  input  aes_pkg::ciph_op_e    op_i,
+  input  logic [3:0][3:0][7:0] data_i,
+  output logic [3:0][3:0][7:0] data_o
+);
+  import aes_pkg::*;
+  
+  logic [3:0][3:0][7:0] data_i_transposed;
+  logic [3:0][3:0][7:0] data_o_transposed;
+  assign data_i_transposed = aes_transpose(data_i);
+  
+  for (genvar i = 0; i < 4; i++) begin : gen_mix_column
+    aes_mix_single_column u_aes_mix_column_i (
+      .op_i   ( op_i                 ),
+      .data_i ( data_i_transposed[i] ),
+      .data_o ( data_o_transposed[i] )
+    );
+  end
+  assign data_o = aes_transpose(data_o_transposed);
+endmodule
+
+module aes_mix_single_column (
+  input  aes_pkg::ciph_op_e op_i,
+  input  logic [3:0][7:0]   data_i,
+  output logic [3:0][7:0]   data_o
+);
+  import aes_pkg::*;
+  logic [3:0][7:0] x;
+  logic [1:0][7:0] y;
+  logic [1:0][7:0] z;
+  logic [3:0][7:0] x_mul2;
+  logic [1:0][7:0] y_pre_mul4;
+  logic      [7:0] y2, y2_pre_mul2;
+  logic [1:0][7:0] z_muxed;
+  
+  assign x[0] = data_i[0] ^ data_i[3];
+  assign x[1] = data_i[3] ^ data_i[2];
+  assign x[2] = data_i[2] ^ data_i[1];
+  assign x[3] = data_i[1] ^ data_i[0];
+  
+  for (genvar i = 0; i < 4; i++) begin : gen_x_mul2
+    assign x_mul2[i] = aes_mul2(x[i]);
+  end
+  
+  assign y_pre_mul4[0] = data_i[3] ^ data_i[1];
+  assign y_pre_mul4[1] = data_i[2] ^ data_i[0];
+  
+  for (genvar i = 0; i < 2; i++) begin : gen_mul4
+    assign y[i] = aes_mul4(y_pre_mul4[i]);
+  end
+  
+  assign y2_pre_mul2 = y[0] ^ y[1];
+  
+  assign y2 = aes_mul2(y2_pre_mul2);
+  
+  assign z[0] = y2 ^ y[0];
+  assign z[1] = y2 ^ y[1];
+  
+  assign z_muxed[0] = (op_i == CIPH_FWD) ? 8'b0 :
+                      (op_i == CIPH_INV) ? z[0] : 8'b0;
+  assign z_muxed[1] = (op_i == CIPH_FWD) ? 8'b0 :
+                      (op_i == CIPH_INV) ? z[1] : 8'b0;
+  
+  assign data_o[0] = data_i[1] ^ x_mul2[3] ^ x[1] ^ z_muxed[1];
+  assign data_o[1] = data_i[0] ^ x_mul2[2] ^ x[1] ^ z_muxed[0];
+  assign data_o[2] = data_i[3] ^ x_mul2[1] ^ x[3] ^ z_muxed[1];
+  assign data_o[3] = data_i[2] ^ x_mul2[0] ^ x[3] ^ z_muxed[0];
+endmodule
+
+package aes_pkg;
+parameter bit ClearStatusOnFatalAlert = 1'b0;
+parameter int unsigned NumSharesKey = 2;
+parameter int unsigned SliceSizeCtr = 16;
+parameter int unsigned NumSlicesCtr = aes_reg_pkg::NumRegsIv * 32 / SliceSizeCtr;
+parameter int unsigned SliceIdxWidth = prim_util_pkg::vbits(NumSlicesCtr);
+parameter int unsigned SliceIdxMaxInc32 = 32 / SliceSizeCtr - 1;
+parameter int unsigned WidthPRDClearing = 64;
+parameter int unsigned NumChunksPRDClearing128 = 128/WidthPRDClearing;
+parameter int unsigned NumChunksPRDClearing256 = 256/WidthPRDClearing;
+parameter int unsigned WidthPRDSBox     = 8;  
+                                              
+                                              
+parameter int unsigned WidthPRDData     = 16*WidthPRDSBox; 
+parameter int unsigned WidthPRDKey      = 4*WidthPRDSBox;  
+parameter int unsigned WidthPRDMasking  = WidthPRDData + WidthPRDKey;
+parameter int ClearingLfsrWidth = 64;
+typedef logic [ClearingLfsrWidth-1:0] clearing_lfsr_seed_t;
+typedef logic [ClearingLfsrWidth-1:0][$clog2(ClearingLfsrWidth)-1:0] clearing_lfsr_perm_t;
+parameter clearing_lfsr_seed_t RndCnstClearingLfsrSeedDefault = 64'hc32d580f74f1713a;
+parameter clearing_lfsr_perm_t RndCnstClearingLfsrPermDefault = {
+  128'hb33fdfc81deb6292c21f8a3102585067,
+  256'h9c2f4be1bbe937b4b7c9d7f4e57568d99c8ae291a899143e0d8459d31b143223
+};
+parameter clearing_lfsr_perm_t RndCnstClearingSharePermDefault = {
+  128'hf66fd61b27847edc2286706fb3a2e900,
+  256'h9736b95ac3f3b5205caf8dc536aad73605d393c8dd94476e830e97891d4828d0
+};
+parameter int MaskingLfsrWidth = 160; 
+typedef logic [MaskingLfsrWidth-1:0][$clog2(MaskingLfsrWidth)-1:0] masking_lfsr_perm_t;
+parameter masking_lfsr_perm_t RndCnstMaskingLfsrPermDefault = {
+  256'h17261943423e4c5c03872194050c7e5f8497081d96666d406f4b606473303469,
+  256'h8e7c721c8832471f59919e0b128f067b25622768462e554d8970815d490d7f44,
+  256'h048c867d907a239b20220f6c79071a852d76485452189f14091b1e744e396737,
+  256'h4f785b772b352f6550613c58130a8b104a3f28019c9a380233956b00563a512c,
+  256'h808d419d63982a16995e0e3b57826a36718a9329452492533d83115a75316e15
+};
+parameter int MaskingPrngStateWidth = 288;
+typedef logic [MaskingPrngStateWidth-1:0] masking_lfsr_seed_t;
+parameter masking_lfsr_seed_t RndCnstMaskingLfsrSeedDefault = {
+  32'h758a4420,
+  256'h31e1c461_6ea343ec_153282a3_0c132b57_23c5a4cf_4743b3c7_c32d580f_74f1713a
+};
+typedef enum integer {
+  SBoxImplLut,                   
+  SBoxImplCanright,              
+  SBoxImplCanrightMasked,        
+                                 
+  SBoxImplCanrightMaskedNoreuse, 
+                                 
+  SBoxImplDom                    
+                                 
+} sbox_impl_e;
+parameter int unsigned GCMDegree = 128;
+parameter bit [GCMDegree-1:0] GCMIPoly = GCMDegree'(1'b1) << 7 |
+                                         GCMDegree'(1'b1) << 2 |
+                                         GCMDegree'(1'b1) << 1 |
+                                         GCMDegree'(1'b1) << 0;
+parameter int AES_OP_WIDTH             = 2;
+parameter int AES_MODE_WIDTH           = 6;
+parameter int AES_KEYLEN_WIDTH         = 3;
+parameter int AES_PRNGRESEEDRATE_WIDTH = 3;
+parameter int AES_GCMPHASE_WIDTH       = 6;
+typedef enum logic [AES_OP_WIDTH-1:0] {
+  AES_ENC = 2'b01,
+  AES_DEC = 2'b10
+} aes_op_e;
+typedef enum logic [AES_MODE_WIDTH-1:0] {
+  AES_ECB  = 6'b00_0001,
+  AES_CBC  = 6'b00_0010,
+  AES_CFB  = 6'b00_0100,
+  AES_OFB  = 6'b00_1000,
+  AES_CTR  = 6'b01_0000,
+  AES_GCM  = 6'b10_0000,
+  AES_NONE = 6'b11_1111
+} aes_mode_e;
+typedef enum logic [AES_OP_WIDTH-1:0] {
+  CIPH_FWD = 2'b01,
+  CIPH_INV = 2'b10
+} ciph_op_e;
+typedef enum logic [AES_KEYLEN_WIDTH-1:0] {
+  AES_128 = 3'b001,
+  AES_192 = 3'b010,
+  AES_256 = 3'b100
+} key_len_e;
+typedef enum logic [AES_PRNGRESEEDRATE_WIDTH-1:0] {
+  PER_1  = 3'b001,
+  PER_64 = 3'b010,
+  PER_8K = 3'b100
+} prs_rate_e;
+parameter int unsigned BlockCtrWidth = 13;
+typedef enum logic [AES_GCMPHASE_WIDTH-1:0] {
+  GCM_INIT    = 6'b00_0001,
+  GCM_RESTORE = 6'b00_0010,
+  GCM_AAD     = 6'b00_0100,
+  GCM_TEXT    = 6'b00_1000,
+  GCM_SAVE    = 6'b01_0000,
+  GCM_TAG     = 6'b10_0000
+} gcm_phase_e;
+typedef struct packed {
+  logic [31:7] unused;
+  logic        alert_fatal_fault;
+  logic        alert_recov_ctrl_update_err;
+  logic        input_ready;
+  logic        output_valid;
+  logic        output_lost;
+  logic        stall;
+  logic        idle;
+} status_t;
+typedef struct packed {
+  logic        recov_ctrl_update_err;
+  logic        fatal_fault;
+} alert_test_t;
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  localparam int CipherCtrlStateWidth = 6;
+  typedef enum logic [CipherCtrlStateWidth-1:0] {
+    CIPHER_CTRL_IDLE        = 6'b001001,
+    CIPHER_CTRL_INIT        = 6'b100011,
+    CIPHER_CTRL_ROUND       = 6'b111101,
+    CIPHER_CTRL_FINISH      = 6'b010000,
+    CIPHER_CTRL_PRNG_RESEED = 6'b100100,
+    CIPHER_CTRL_CLEAR_S     = 6'b111010,
+    CIPHER_CTRL_CLEAR_KD    = 6'b001110,
+    CIPHER_CTRL_ERROR       = 6'b010111
+  } aes_cipher_ctrl_e;
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  localparam int CtrStateWidth = 5;
+  typedef enum logic [CtrStateWidth-1:0] {
+    CTR_IDLE  = 5'b01110,
+    CTR_INCR  = 5'b11000,
+    CTR_ERROR = 5'b00001
+  } aes_ctr_e;
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  localparam int CtrlStateWidth = 6;
+  typedef enum logic [CtrlStateWidth-1:0] {
+    CTRL_IDLE        = 6'b001001,
+    CTRL_LOAD        = 6'b100011,
+    CTRL_GHASH_READY = 6'b111101,
+    CTRL_PRNG_RESEED = 6'b010000,
+    CTRL_FINISH      = 6'b100100,
+    CTRL_CLEAR_I     = 6'b111010,
+    CTRL_CLEAR_CO    = 6'b001110,
+    CTRL_ERROR       = 6'b010111
+  } aes_ctrl_e;
+localparam int GhashStateWidth = 7;
+typedef enum logic [GhashStateWidth-1:0] {
+  GHASH_IDLE                    = 7'b1100001,
+  GHASH_MULT                    = 7'b0010001,
+  GHASH_ADD_S                   = 7'b0000110,
+  GHASH_OUT                     = 7'b0110111,
+  GHASH_ERROR                   = 7'b0111010,
+  GHASH_MASKED_INIT             = 7'b1111100,
+  GHASH_MASKED_ADD_STATE_SHARES = 7'b0101101,
+  GHASH_MASKED_ADD_CORR         = 7'b0001000,
+  GHASH_MASKED_SETTLE           = 7'b1001111
+} aes_ghash_e;
+parameter int Mux2SelWidth = 3;
+typedef enum logic [Mux2SelWidth-1:0] {
+  MUX2_SEL_0 = 3'b011,
+  MUX2_SEL_1 = 3'b100
+} mux2_sel_e;
+parameter int Mux3SelWidth = 5;
+typedef enum logic [Mux3SelWidth-1:0] {
+  MUX3_SEL_0 = 5'b01110,
+  MUX3_SEL_1 = 5'b11000,
+  MUX3_SEL_2 = 5'b00001
+} mux3_sel_e;
+parameter int Mux4SelWidth = 5;
+typedef enum logic [Mux4SelWidth-1:0] {
+  MUX4_SEL_0 = 5'b01110,
+  MUX4_SEL_1 = 5'b11000,
+  MUX4_SEL_2 = 5'b00001,
+  MUX4_SEL_3 = 5'b10111
+} mux4_sel_e;
+localparam int Mux5SelWidth = 6;
+typedef enum logic [Mux5SelWidth-1:0] {
+  MUX5_SEL_0 = 6'b110000,
+  MUX5_SEL_1 = 6'b001000,
+  MUX5_SEL_2 = 6'b000011,
+  MUX5_SEL_3 = 6'b011101,
+  MUX5_SEL_4 = 6'b111110
+} mux5_sel_e;
+parameter int Mux6SelWidth = 6;
+typedef enum logic [Mux6SelWidth-1:0] {
+  MUX6_SEL_0 = 6'b011101,
+  MUX6_SEL_1 = 6'b110000,
+  MUX6_SEL_2 = 6'b001000,
+  MUX6_SEL_3 = 6'b000011,
+  MUX6_SEL_4 = 6'b111110,
+  MUX6_SEL_5 = 6'b100101
+} mux6_sel_e;
+parameter int DIPSelNum = 2;
+parameter int DIPSelWidth = Mux2SelWidth;
+typedef enum logic [DIPSelWidth-1:0] {
+  DIP_DATA_IN = MUX2_SEL_0,
+  DIP_CLEAR   = MUX2_SEL_1
+} dip_sel_e;
+parameter int SISelNum = 2;
+parameter int SISelWidth = Mux2SelWidth;
+typedef enum logic [SISelWidth-1:0] {
+  SI_ZERO = MUX2_SEL_0,
+  SI_DATA = MUX2_SEL_1
+} si_sel_e;
+parameter int AddSISelNum = 2;
+parameter int AddSISelWidth = Mux2SelWidth;
+typedef enum logic [AddSISelWidth-1:0] {
+  ADD_SI_ZERO = MUX2_SEL_0,
+  ADD_SI_IV   = MUX2_SEL_1
+} add_si_sel_e;
+parameter int StateSelNum = 3;
+parameter int StateSelWidth = Mux3SelWidth;
+typedef enum logic [StateSelWidth-1:0] {
+  STATE_INIT  = MUX3_SEL_0,
+  STATE_ROUND = MUX3_SEL_1,
+  STATE_CLEAR = MUX3_SEL_2
+} state_sel_e;
+parameter int AddRKSelNum = 3;
+parameter int AddRKSelWidth = Mux3SelWidth;
+typedef enum logic [AddRKSelWidth-1:0] {
+  ADD_RK_INIT  = MUX3_SEL_0,
+  ADD_RK_ROUND = MUX3_SEL_1,
+  ADD_RK_FINAL = MUX3_SEL_2
+} add_rk_sel_e;
+parameter int KeyInitSelNum = 3;
+parameter int KeyInitSelWidth = Mux3SelWidth;
+typedef enum logic [KeyInitSelWidth-1:0] {
+  KEY_INIT_INPUT  = MUX3_SEL_0,
+  KEY_INIT_KEYMGR = MUX3_SEL_1,
+  KEY_INIT_CLEAR  = MUX3_SEL_2
+} key_init_sel_e;
+parameter int IVSelNum = 6;
+parameter int IVSelWidth = Mux6SelWidth;
+typedef enum logic [IVSelWidth-1:0] {
+  IV_INPUT        = MUX6_SEL_0,
+  IV_DATA_OUT     = MUX6_SEL_1,
+  IV_DATA_OUT_RAW = MUX6_SEL_2,
+  IV_DATA_IN_PREV = MUX6_SEL_3,
+  IV_CTR          = MUX6_SEL_4,
+  IV_CLEAR        = MUX6_SEL_5
+} iv_sel_e;
+parameter int KeyFullSelNum = 4;
+parameter int KeyFullSelWidth = Mux4SelWidth;
+typedef enum logic [KeyFullSelWidth-1:0] {
+  KEY_FULL_ENC_INIT = MUX4_SEL_0,
+  KEY_FULL_DEC_INIT = MUX4_SEL_1,
+  KEY_FULL_ROUND    = MUX4_SEL_2,
+  KEY_FULL_CLEAR    = MUX4_SEL_3
+} key_full_sel_e;
+parameter int KeyDecSelNum = 2;
+parameter int KeyDecSelWidth = Mux2SelWidth;
+typedef enum logic [KeyDecSelWidth-1:0] {
+  KEY_DEC_EXPAND = MUX2_SEL_0,
+  KEY_DEC_CLEAR  = MUX2_SEL_1
+} key_dec_sel_e;
+parameter int KeyWordsSelNum = 4;
+parameter int KeyWordsSelWidth = Mux4SelWidth;
+typedef enum logic [KeyWordsSelWidth-1:0] {
+  KEY_WORDS_0123 = MUX4_SEL_0,
+  KEY_WORDS_2345 = MUX4_SEL_1,
+  KEY_WORDS_4567 = MUX4_SEL_2,
+  KEY_WORDS_ZERO = MUX4_SEL_3
+} key_words_sel_e;
+parameter int RoundKeySelNum = 2;
+parameter int RoundKeySelWidth = Mux2SelWidth;
+typedef enum logic [RoundKeySelWidth-1:0] {
+  ROUND_KEY_DIRECT = MUX2_SEL_0,
+  ROUND_KEY_MIXED  = MUX2_SEL_1
+} round_key_sel_e;
+parameter int AddSOSelNum = 3;
+parameter int AddSOSelWidth = Mux3SelWidth;
+typedef enum logic [AddSOSelWidth-1:0] {
+  ADD_SO_ZERO = MUX3_SEL_0,
+  ADD_SO_IV   = MUX3_SEL_1,
+  ADD_SO_DIP  = MUX3_SEL_2
+} add_so_sel_e;
+parameter int GHashInSelNum = 2;
+parameter int GHashInSelWidth = Mux2SelWidth;
+typedef enum logic [GHashInSelWidth-1:0] {
+  GHASH_IN_DATA_IN_PREV = MUX2_SEL_0,
+  GHASH_IN_DATA_OUT     = MUX2_SEL_1
+} ghash_in_sel_e;
+parameter int GHashAddInSelWidth = 3;
+typedef enum logic [GHashAddInSelWidth-1:0] {
+  ADD_IN_GHASH_IN = 3'b001,
+  ADD_IN_CORR_A   = 3'b010,
+  ADD_IN_CORR_B   = 3'b100,
+  ADD_IN_ZERO     = 3'b000
+} ghash_add_in_sel_e;
+parameter int GHashStateSelNum = 5;
+parameter int GHashStateSelWidth = Mux5SelWidth;
+typedef enum logic [GHashStateSelWidth-1:0] {
+  GHASH_STATE_RESTORE = MUX5_SEL_0,
+  GHASH_STATE_INIT    = MUX5_SEL_1,
+  GHASH_STATE_ADD     = MUX5_SEL_2,
+  GHASH_STATE_ADD_S   = MUX5_SEL_3,
+  GHASH_STATE_MULT    = MUX5_SEL_4
+} ghash_state_sel_e;
+parameter int GFMultInSelWidth = 3;
+typedef enum logic [GFMultInSelWidth-1:0] {
+  MULT_IN_STATE0 = 3'b001,
+  MULT_IN_STATE1 = 3'b010,
+  MULT_IN_S1     = 3'b100,
+  MULT_IN_ZERO   = 3'b000
+} gf_mult_in_sel_e;
+parameter int DataOutSelNum = 2;
+parameter int DataOutSelWidth = Mux2SelWidth;
+typedef enum logic [DataOutSelWidth-1:0] {
+  DATA_OUT_CIPHER = MUX2_SEL_0,
+  DATA_OUT_GHASH  = MUX2_SEL_1
+} data_out_sel_e;
+parameter int Sp2VNum = 2;
+parameter int Sp2VWidth = Mux2SelWidth;
+typedef enum logic [Sp2VWidth-1:0] {
+  SP2V_HIGH = MUX2_SEL_0,
+  SP2V_LOW  = MUX2_SEL_1
+} sp2v_e;
+typedef logic [Sp2VWidth-1:0] sp2v_logic_t;
+parameter sp2v_logic_t SP2V_LOGIC_HIGH = {SP2V_HIGH};
+typedef struct packed {
+  logic      manual_operation;
+  prs_rate_e prng_reseed_rate;
+  logic      sideload;
+  key_len_e  key_len;
+  aes_mode_e mode;
+  aes_op_e   operation;
+} ctrl_reg_t;
+parameter ctrl_reg_t CTRL_RESET = '{
+  manual_operation: aes_reg_pkg::AES_CTRL_SHADOWED_MANUAL_OPERATION_RESVAL,
+  prng_reseed_rate: prs_rate_e'(aes_reg_pkg::AES_CTRL_SHADOWED_PRNG_RESEED_RATE_RESVAL),
+  sideload:         aes_reg_pkg::AES_CTRL_SHADOWED_SIDELOAD_RESVAL,
+  key_len:          key_len_e'(aes_reg_pkg::AES_CTRL_SHADOWED_KEY_LEN_RESVAL),
+  mode:             aes_mode_e'(aes_reg_pkg::AES_CTRL_SHADOWED_MODE_RESVAL),
+  operation:        aes_op_e'(aes_reg_pkg::AES_CTRL_SHADOWED_OPERATION_RESVAL)
+};
+typedef struct packed {
+  logic [4:0] num_valid_bytes;
+  gcm_phase_e phase;
+} ctrl_gcm_reg_t;
+function automatic logic [7:0] aes_mul2(logic [7:0] in);
+  logic [7:0] out;
+  out[7] = in[6];
+  out[6] = in[5];
+  out[5] = in[4];
+  out[4] = in[3] ^ in[7];
+  out[3] = in[2] ^ in[7];
+  out[2] = in[1];
+  out[1] = in[0] ^ in[7];
+  out[0] = in[7];
+  return out;
+endfunction
+function automatic logic [7:0] aes_mul4(logic [7:0] in);
+  return aes_mul2(aes_mul2(in));
+endfunction
+function automatic logic [7:0] aes_div2(logic [7:0] in);
+  logic [7:0] out;
+  out[7] = in[0];
+  out[6] = in[7];
+  out[5] = in[6];
+  out[4] = in[5];
+  out[3] = in[4] ^ in[0];
+  out[2] = in[3] ^ in[0];
+  out[1] = in[2];
+  out[0] = in[1] ^ in[0];
+  return out;
+endfunction
+function automatic logic [31:0] aes_circ_byte_shift(logic [31:0] in, logic [1:0] shift);
+  logic [31:0] out;
+  logic [31:0] s;
+  s = {30'b0,shift};
+  out = {in[8*((7-s)%4) +: 8], in[8*((6-s)%4) +: 8],
+         in[8*((5-s)%4) +: 8], in[8*((4-s)%4) +: 8]};
+  return out;
+endfunction
+function automatic logic [3:0][3:0][7:0] aes_transpose(logic [3:0][3:0][7:0] in);
+  logic [3:0][3:0][7:0] transpose;
+  transpose = '0;
+  for (int j = 0; j < 4; j++) begin
+    for (int i = 0; i < 4; i++) begin
+      transpose[i][j] = in[j][i];
+    end
+  end
+  return transpose;
+endfunction
+function automatic logic [127:0] aes_state_to_ghash_vec(logic [3:0][3:0][7:0] in);
+  logic [127:0] out;
+  logic [15:0][7:0] byte_vec;
+  for (int i = 0; i < 4; i++) begin
+    for (int j = 0; j < 4; j++) begin
+      byte_vec[15 - 4*i - j] = in[j][i];
+    end
+  end
+  out = byte_vec;
+  return out;
+endfunction
+function automatic logic [127:0] aes_ghash_reverse_bit_order(logic [127:0] in);
+  logic [127:0] out;
+  for (int i = 0; i < 128; i++) begin
+    out[i] = in[127-i];
+  end
+  return out;
+endfunction
+function automatic logic [3:0][7:0] aes_col_get(logic [3:0][3:0][7:0] in, logic [1:0] idx);
+  logic [3:0][7:0] out;
+  for (int i = 0; i < 4; i++) begin
+    out[i] = in[i][idx];
+  end
+  return out;
+endfunction
+function automatic logic [7:0] aes_mvm(
+  logic [7:0] vec_b,
+  logic [7:0] mat_a [8]
+);
+  logic [7:0] vec_c;
+  vec_c = '0;
+  for (int i = 0; i < 8; i++) begin
+    for (int j = 0; j < 8; j++) begin
+      vec_c[i] = vec_c[i] ^ (mat_a[j][i] & vec_b[7-j]);
+    end
+  end
+  return vec_c;
+endfunction
+function automatic integer aes_rot_int(integer in, integer num);
+  integer out;
+  if (in == 0) begin
+    out = num - 1;
+  end else begin
+    out = in - 1;
+  end
+  return out;
+endfunction
+function automatic logic [3:0][7:0] aes_prd_get_lsbs(
+  logic [(4*WidthPRDSBox)-1:0] in
+);
+  logic [3:0][7:0] prd_lsbs;
+  for (int i = 0; i < 4; i++) begin
+    prd_lsbs[i] = in[i*WidthPRDSBox +: 8];
+  end
+  return prd_lsbs;
+endfunction
+endpackage
+
+`ifndef PRIM_ASSERT_SV
+`define PRIM_ASSERT_SV
+`define ASSERT_DEFAULT_CLK clk_i
+`define ASSERT_DEFAULT_RST !rst_ni
+`define PRIM_STRINGIFY(__x) `"__x`"
+`define ASSERT_ERROR(__name)                                                             \
+`ifdef UVM                                                                               \
+  uvm_pkg::uvm_report_error("ASSERT FAILED", `PRIM_STRINGIFY(__name), uvm_pkg::UVM_NONE, \
+                            `__FILE__, `__LINE__, "", 1);                                \
+`else                                                                                    \
+  $error("%0t: (%0s:%0d) [%m] [ASSERT FAILED] %0s", $time, `__FILE__, `__LINE__,         \
+         `PRIM_STRINGIFY(__name));                                                       \
+`endif
+`define ASSERT_STATIC_LINT_ERROR(__name, __prop)     \
+  localparam int __name = (__prop) ? 1 : 2;          \
+  always_comb begin                                  \
+    logic unused_assert_static_lint_error;           \
+    unused_assert_static_lint_error = __name'(1'b1); \
+  end
+`define ASSERT_STATIC_IN_PACKAGE(__name, __prop)              \
+  function automatic bit assert_static_in_package_``__name(); \
+    bit unused_bit [((__prop) ? 1 : -1)];                     \
+    unused_bit = '{default: 1'b0};                            \
+    return unused_bit[0];                                     \
+  endfunction
+`ifdef VERILATOR
+ `include "prim_assert_dummy_macros.svh"`elsif SYNTHESIS
+ `include "prim_assert_dummy_macros.svh"`elsif YOSYS
+ `include "prim_assert_yosys_macros.svh"
+ `define INC_ASSERT`else
+ 
+`define ASSERT_I(__name, __prop) \
+  __name: assert (__prop)        \
+    else begin                   \
+      `ASSERT_ERROR(__name)      \
+    end
+`define ASSERT_INIT(__name, __prop)                                                  \
+`ifdef FPV_ON                                                                        \
+  if (!(__prop)) $fatal(2, "Fatal static assertion [%s]: (%s) is not true.",         \
+                        (__name), (__prop));                                         \
+`else                                                                                \
+  initial begin                                                                      \
+    __name: assert (__prop)                                                          \
+      else begin                                                                     \
+        `ASSERT_ERROR(__name)                                                        \
+      end                                                                            \
+  end                                                                                \
+`endif
+`define ASSERT_INIT_NET(__name, __prop)                                                   \
+  initial begin                                                                      \
+    
+    
+    
+    #1ps;                                                                            \
+    __name: assert (__prop)                                                          \
+      else begin                                                                     \
+        `ASSERT_ERROR(__name)                                                        \
+      end                                                                            \
+  end                                                                                \
+`define ASSERT_FINAL(__name, __prop)                                         \
+`ifndef FPV_ON                                                               \
+  final begin                                                                \
+    __name: assert (__prop || $test$plusargs("disable_assert_final_checks")) \
+      else begin                                                             \
+        `ASSERT_ERROR(__name)                                                \
+      end                                                                    \
+  end                                                                        \
+`endif
+`define ASSERT_AT_RESET(__name, __prop, __rst = `ASSERT_DEFAULT_RST)          \
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+`ifndef FPV_ON                                                                \
+  __name: assert property (@(posedge __rst) $isunknown(__rst) || (__prop))    \
+`else                                                                         \
+  __name: assert property (@(posedge __rst) (__prop))                         \
+`endif                                                                        \
+    else begin                                                                \
+      `ASSERT_ERROR(__name)                                                   \
+    end
+`define ASSERT_AT_RESET_AND_FINAL(__name, __prop, __rst = `ASSERT_DEFAULT_RST) \
+    `ASSERT_AT_RESET(AtReset_``__name``, __prop, __rst)                        \
+    `ASSERT_FINAL(Final_``__name``, __prop)
+`define ASSERT(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: assert property (@(posedge __clk) disable iff ((__rst) !== '0) (__prop))       \
+    else begin                                                                           \
+      `ASSERT_ERROR(__name)                                                              \
+    end
+`define ASSERT_NEVER(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: assert property (@(posedge __clk) disable iff ((__rst) !== '0) not (__prop))         \
+    else begin                                                                                 \
+      `ASSERT_ERROR(__name)                                                                    \
+    end
+`define ASSERT_KNOWN(__name, __sig, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifndef FPV_ON                                                                                \
+  `ASSERT(__name, !$isunknown(__sig), __clk, __rst)                                           \
+`endif
+`define COVER(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: cover property (@(posedge __clk) disable iff ((__rst) !== '0) (__prop));
+`define ASSUME(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: assume property (@(posedge __clk) disable iff ((__rst) !== '0) (__prop))       \
+    else begin                                                                           \
+      `ASSERT_ERROR(__name)                                                              \
+    end
+`define ASSUME_I(__name, __prop) \
+  __name: assume (__prop)        \
+    else begin                   \
+      `ASSERT_ERROR(__name)      \
+    end
+ `define INC_ASSERT
+`endif
+`define ASSERT_PULSE(__name, __sig, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  `ASSERT(__name, $rose(__sig) |=> !(__sig), __clk, __rst)
+`define ASSERT_IF(__name, __prop, __enable, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  `ASSERT(__name, (__enable) |-> (__prop), __clk, __rst)
+`define ASSERT_KNOWN_IF(__name, __sig, __enable, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifndef FPV_ON                                                                                             \
+  `ASSERT_KNOWN(__name``KnownEnable, __enable, __clk, __rst)                                               \
+  `ASSERT_IF(__name, !$isunknown(__sig), __enable, __clk, __rst)                                           \
+`endif
+`define ASSUME_FPV(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifdef FPV_ON                                                                                \
+   `ASSUME(__name, __prop, __clk, __rst)                                                     \
+`endif
+`define ASSUME_I_FPV(__name, __prop) \
+`ifdef FPV_ON                        \
+   `ASSUME_I(__name, __prop)         \
+`endif
+`define COVER_FPV(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifdef FPV_ON                                                                               \
+   `COVER(__name, __prop, __clk, __rst)                                                     \
+`endif
+`define ASSERT_FPV_LINEAR_FSM(__name, __state, __type, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  `ifdef INC_ASSERT                                                                                              \
+     bit __name``_cond;                                                                                          \
+     always_ff @(posedge __clk or posedge __rst) begin                                                           \
+       if (__rst) begin                                                                                          \
+         __name``_cond <= 0;                                                                                     \
+       end else begin                                                                                            \
+         __name``_cond <= 1;                                                                                     \
+       end                                                                                                       \
+     end                                                                                                         \
+     property __name``_p;                                                                                        \
+       __type initial_state;                                                                                     \
+       (!$stable(__state) & __name``_cond, initial_state = $past(__state)) |->                                   \
+           (__state != initial_state) until !(__name``_cond);                                                    \
+     endproperty                                                                                                 \
+   `ASSERT(__name, __name``_p, __clk, 0)                                                                         \
+  `endif
+`ifndef PRIM_ASSERT_SEC_CM_SVH
+`define PRIM_ASSERT_SEC_CM_SVH
+`define _SEC_CM_ALERT_MAX_CYC 30
+`define ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, ERR_NAME_, CLK_, RST_) \
+  `ASSERT(FpvSecCm``NAME_``,                                                                    \
+          $rose(HIER_.ERR_NAME_) && !(GATE_) |-> ##[0:MAX_CYCLES_] (ERR_),                      \
+          CLK_, RST_)                                                                           \
+  `ifdef INC_ASSERT                                                                             \
+    assign HIER_.unused_assert_connected = 1'b1;                                                \
+  `endif
+`define ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, ERR_NAME_)    \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, (ALERT_.alert_p), GATE_, MAX_CYCLES_, ERR_NAME_, \
+                            `ASSERT_DEFAULT_CLK, `ASSERT_DEFAULT_RST)                      \
+  `ASSUME_FPV(``NAME_``TriggerAfterAlertInit_S,                                            \
+              $stable(rst_ni) == 0 |-> HIER_.ERR_NAME_ == 0 [*10])
+`define ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_IN_, GATE_, MAX_CYCLES_, ERR_NAME_) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ALERT_IN_, GATE_, MAX_CYCLES_, ERR_NAME_,           \
+                            `ASSERT_DEFAULT_CLK, `ASSERT_DEFAULT_RST)
+`define ASSERT_PRIM_COUNT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_DOUBLE_LFSR_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_FSM_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, unused_err_o)
+`define ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_REG_WE_ONEHOT_ERROR_TRIGGER_ALERT(NAME_, REG_TOP_HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT(NAME_, \
+    REG_TOP_HIER_.u_prim_reg_we_check.u_prim_onehot_check, ALERT_, GATE_, MAX_CYCLES_)
+`define ASSERT_PRIM_FIFO_SYNC_SINGLETON_ERROR_TRIGGER_ALERT(NAME, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_COUNT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_DOUBLE_LFSR_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_FSM_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, unused_err_o)
+`define ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_REG_WE_ONEHOT_ERROR_TRIGGER_ALERT_IN(NAME_, REG_TOP_HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT_IN(NAME_, \
+    REG_TOP_HIER_.u_prim_reg_we_check.u_prim_onehot_check, ALERT_, GATE_, MAX_CYCLES_)
+`define ASSERT_PRIM_FIFO_SYNC_SINGLETON_ERROR_TRIGGER_ALERT_IN(NAME, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_FSM_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = 2, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, unused_err_o, CLK_, RST_)
+`define ASSERT_PRIM_COUNT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = 2, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, err_o, CLK_, RST_)
+`define ASSERT_PRIM_DOUBLE_LFSR_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = 2, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, err_o, CLK_, RST_)
+`define ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, err_o, CLK_, RST_)
+`define ASSERT_PRIM_REG_WE_ONEHOT_ERROR_TRIGGER_ERR(NAME_, REG_TOP_HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ERR(NAME_, \
+    REG_TOP_HIER_.u_prim_reg_we_check.u_prim_onehot_check, ERR_, GATE_, MAX_CYCLES_, CLK_, RST_)
+`endif 
+`ifndef PRIM_FLOP_MACROS_SV
+`define PRIM_FLOP_MACROS_SV
+`define PRIM_FLOP_CLK clk_i
+`define PRIM_FLOP_RST rst_ni
+`define PRIM_FLOP_RESVAL '0
+`define PRIM_FLOP_A(__d, __q, __resval = `PRIM_FLOP_RESVAL, __clk = `PRIM_FLOP_CLK, __rst_n = `PRIM_FLOP_RST) \
+  always_ff @(posedge __clk or negedge __rst_n) begin \
+    if (!__rst_n) begin                               \
+      __q <= __resval;                                \
+    end else begin                                    \
+      __q <= __d;                                     \
+    end                                               \
+  end
+`define PRIM_FLOP_SPARSE_FSM(__name, __d, __q, __type, __resval = `PRIM_FLOP_RESVAL, __clk = `PRIM_FLOP_CLK, __rst_n = `PRIM_FLOP_RST, __alert_trigger_sva_en = 1) \
+  `ifdef SIMULATION                                   \
+    prim_sparse_fsm_flop #(                           \
+      .StateEnumT(__type),                            \
+      .Width($bits(__type)),                          \
+      .ResetValue($bits(__type)'(__resval)),          \
+      .EnableAlertTriggerSVA(__alert_trigger_sva_en), \
+      .CustomForceName(`PRIM_STRINGIFY(__q))          \
+    ) __name (                                        \
+      .clk_i   ( __clk   ),                           \
+      .rst_ni  ( __rst_n ),                           \
+      .state_i ( __d     ),                           \
+      .state_o (         )                            \
+    );                                                \
+    `PRIM_FLOP_A(__d, __q, __resval, __clk, __rst_n)  \
+    `ASSERT(``__name``_A, __q === ``__name``.state_o) \
+  `else                                               \
+    prim_sparse_fsm_flop #(                           \
+      .StateEnumT(__type),                            \
+      .Width($bits(__type)),                          \
+      .ResetValue($bits(__type)'(__resval)),          \
+      .EnableAlertTriggerSVA(__alert_trigger_sva_en)  \
+    ) __name (                                        \
+      .clk_i   ( __clk   ),                           \
+      .rst_ni  ( __rst_n ),                           \
+      .state_i ( __d     ),                           \
+      .state_o ( __q     )                            \
+    );                                                \
+  `endif
+`endif 
+`endif 
+module aes_prng_masking import aes_pkg::*;
+#(
+  parameter  int unsigned Width        = WidthPRDMasking,
+  parameter  int unsigned EntropyWidth = edn_pkg::ENDPOINT_BUS_WIDTH,
+  parameter  bit          SecAllowForcingMasks  = 0, 
+                                                     
+  parameter  bit          SecSkipPRNGReseeding  = 0, 
+                                                     
+                                                     
+                                                     
+                                                     
+  parameter masking_lfsr_seed_t RndCnstLfsrSeed = RndCnstMaskingLfsrSeedDefault,
+  parameter masking_lfsr_perm_t RndCnstLfsrPerm = RndCnstMaskingLfsrPermDefault
+) (
+  input  logic                    clk_i,
+  input  logic                    rst_ni,
+  input  logic                    force_masks_i,
+  
+  input  logic                    data_update_i,
+  output logic        [Width-1:0] data_o,
+  input  logic                    reseed_req_i,
+  output logic                    reseed_ack_o,
+  
+  output logic                    entropy_req_o,
+  input  logic                    entropy_ack_i,
+  input  logic [EntropyWidth-1:0] entropy_i
+);
+  logic             prng_seed_en;
+  logic             prng_seed_done;
+  logic [Width-1:0] prng_key;
+  logic             prng_err;
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  `ASSERT_STATIC_LINT_ERROR(AesSecAllowForcingMasksNonDefault, SecAllowForcingMasks == 0)
+  if (SecAllowForcingMasks == 0) begin : gen_unused_force_masks
+    logic unused_force_masks;
+    assign unused_force_masks = force_masks_i;
+  end
+  
+  `ASSERT_STATIC_LINT_ERROR(AesSecSkipPRNGReseedingNonDefault, SecSkipPRNGReseeding == 0)
+  if (SecSkipPRNGReseeding == 1) begin : gen_unused_prng_seed_done
+    logic unused_prng_seed_done;
+    assign unused_prng_seed_done = prng_seed_done;
+  end
+  
+  assign prng_seed_en = SecSkipPRNGReseeding ? 1'b0         : reseed_req_i;
+  assign reseed_ack_o = SecSkipPRNGReseeding ? reseed_req_i : prng_seed_done;
+  
+  
+  
+  prim_trivium #(
+   .BiviumVariant         (1),
+   .OutputWidth           (Width),
+   .StrictLockupProtection(!SecAllowForcingMasks),
+   .SeedType              (prim_trivium_pkg::SeedTypeStatePartial),
+   .PartialSeedWidth      (EntropyWidth),
+   .RndCnstTriviumLfsrSeed(RndCnstLfsrSeed)
+  ) u_prim_bivium (
+   .clk_i (clk_i),
+   .rst_ni(rst_ni),
+   .en_i                (data_update_i),
+   .allow_lockup_i      (SecAllowForcingMasks & force_masks_i),
+   .seed_en_i           (prng_seed_en),
+   .seed_done_o         (prng_seed_done),
+   .seed_req_o          (entropy_req_o),
+   .seed_ack_i          (entropy_ack_i),
+   .seed_key_i          ('0), 
+   .seed_iv_i           ('0), 
+   .seed_state_full_i   ('0), 
+   .seed_state_partial_i(entropy_i),
+   .key_o(prng_key),
+   .err_o(prng_err)
+  );
+  
+  for (genvar b = 0; b < Width; b++) begin : gen_perm
+    assign data_o[b] = prng_key[RndCnstLfsrPerm[b]];
+  end
+  
+  
+  
+  
+  
+  
+  
+  logic unused_prng_err;
+  assign unused_prng_err = prng_err;
+  
+  
+  
+`ifndef SYNTHESIS
+  
+  logic [Width-1:0] perm_test;
+  initial begin : p_perm_check
+    perm_test = '0;
+    for (int k = 0; k < Width; k++) begin
+      perm_test[RndCnstLfsrPerm[k]] = 1'b1;
+    end
+    
+    `ASSERT_I(PermutationCheck_A, &perm_test)
+  end
+`endif
+endmodule
+
+package aes_reg_pkg;
+  
+  parameter int NumRegsKey = 8;
+  parameter int NumRegsIv = 4;
+  parameter int NumRegsData = 4;
+  parameter int NumAlerts = 2;
+  
+  parameter int BlockAw = 8;
+  
+  parameter int NumRegs = 35;
+  
+  typedef enum int {
+    AlertRecovCtrlUpdateErrIdx = 0,
+    AlertFatalFaultIdx = 1
+  } aes_alert_idx_t;
+  
+  
+  
+  typedef struct packed {
+    struct packed {
+      logic        q;
+      logic        qe;
+    } fatal_fault;
+    struct packed {
+      logic        q;
+      logic        qe;
+    } recov_ctrl_update_err;
+  } aes_reg2hw_alert_test_reg_t;
+  typedef struct packed {
+    logic [31:0] q;
+    logic        qe;
+  } aes_reg2hw_key_share0_mreg_t;
+  typedef struct packed {
+    logic [31:0] q;
+    logic        qe;
+  } aes_reg2hw_key_share1_mreg_t;
+  typedef struct packed {
+    logic [31:0] q;
+    logic        qe;
+  } aes_reg2hw_iv_mreg_t;
+  typedef struct packed {
+    logic [31:0] q;
+    logic        qe;
+  } aes_reg2hw_data_in_mreg_t;
+  typedef struct packed {
+    logic [31:0] q;
+    logic        re;
+  } aes_reg2hw_data_out_mreg_t;
+  typedef struct packed {
+    struct packed {
+      logic        q;
+      logic        qe;
+      logic        re;
+    } manual_operation;
+    struct packed {
+      logic [2:0]  q;
+      logic        qe;
+      logic        re;
+    } prng_reseed_rate;
+    struct packed {
+      logic        q;
+      logic        qe;
+      logic        re;
+    } sideload;
+    struct packed {
+      logic [2:0]  q;
+      logic        qe;
+      logic        re;
+    } key_len;
+    struct packed {
+      logic [5:0]  q;
+      logic        qe;
+      logic        re;
+    } mode;
+    struct packed {
+      logic [1:0]  q;
+      logic        qe;
+      logic        re;
+    } operation;
+  } aes_reg2hw_ctrl_shadowed_reg_t;
+  typedef struct packed {
+    struct packed {
+      logic        q;
+    } force_masks;
+    struct packed {
+      logic        q;
+    } key_touch_forces_reseed;
+  } aes_reg2hw_ctrl_aux_shadowed_reg_t;
+  typedef struct packed {
+    struct packed {
+      logic        q;
+    } prng_reseed;
+    struct packed {
+      logic        q;
+    } data_out_clear;
+    struct packed {
+      logic        q;
+    } key_iv_data_in_clear;
+    struct packed {
+      logic        q;
+    } start;
+  } aes_reg2hw_trigger_reg_t;
+  typedef struct packed {
+    struct packed {
+      logic        q;
+    } input_ready;
+    struct packed {
+      logic        q;
+    } output_valid;
+    struct packed {
+      logic        q;
+    } output_lost;
+    struct packed {
+      logic        q;
+    } idle;
+  } aes_reg2hw_status_reg_t;
+  typedef struct packed {
+    struct packed {
+      logic [4:0]  q;
+      logic        qe;
+      logic        re;
+    } num_valid_bytes;
+    struct packed {
+      logic [5:0]  q;
+      logic        qe;
+      logic        re;
+    } phase;
+  } aes_reg2hw_ctrl_gcm_shadowed_reg_t;
+  typedef struct packed {
+    logic [31:0] d;
+  } aes_hw2reg_key_share0_mreg_t;
+  typedef struct packed {
+    logic [31:0] d;
+  } aes_hw2reg_key_share1_mreg_t;
+  typedef struct packed {
+    logic [31:0] d;
+  } aes_hw2reg_iv_mreg_t;
+  typedef struct packed {
+    logic [31:0] d;
+    logic        de;
+  } aes_hw2reg_data_in_mreg_t;
+  typedef struct packed {
+    logic [31:0] d;
+  } aes_hw2reg_data_out_mreg_t;
+  typedef struct packed {
+    struct packed {
+      logic        d;
+    } manual_operation;
+    struct packed {
+      logic [2:0]  d;
+    } prng_reseed_rate;
+    struct packed {
+      logic        d;
+    } sideload;
+    struct packed {
+      logic [2:0]  d;
+    } key_len;
+    struct packed {
+      logic [5:0]  d;
+    } mode;
+    struct packed {
+      logic [1:0]  d;
+    } operation;
+  } aes_hw2reg_ctrl_shadowed_reg_t;
+  typedef struct packed {
+    struct packed {
+      logic        d;
+      logic        de;
+    } prng_reseed;
+    struct packed {
+      logic        d;
+      logic        de;
+    } data_out_clear;
+    struct packed {
+      logic        d;
+      logic        de;
+    } key_iv_data_in_clear;
+    struct packed {
+      logic        d;
+      logic        de;
+    } start;
+  } aes_hw2reg_trigger_reg_t;
+  typedef struct packed {
+    struct packed {
+      logic        d;
+      logic        de;
+    } alert_fatal_fault;
+    struct packed {
+      logic        d;
+      logic        de;
+    } alert_recov_ctrl_update_err;
+    struct packed {
+      logic        d;
+      logic        de;
+    } input_ready;
+    struct packed {
+      logic        d;
+      logic        de;
+    } output_valid;
+    struct packed {
+      logic        d;
+      logic        de;
+    } output_lost;
+    struct packed {
+      logic        d;
+      logic        de;
+    } stall;
+    struct packed {
+      logic        d;
+      logic        de;
+    } idle;
+  } aes_hw2reg_status_reg_t;
+  typedef struct packed {
+    struct packed {
+      logic [4:0]  d;
+    } num_valid_bytes;
+    struct packed {
+      logic [5:0]  d;
+    } phase;
+  } aes_hw2reg_ctrl_gcm_shadowed_reg_t;
+  
+  typedef struct packed {
+    aes_reg2hw_alert_test_reg_t alert_test; 
+    aes_reg2hw_key_share0_mreg_t [7:0] key_share0; 
+    aes_reg2hw_key_share1_mreg_t [7:0] key_share1; 
+    aes_reg2hw_iv_mreg_t [3:0] iv; 
+    aes_reg2hw_data_in_mreg_t [3:0] data_in; 
+    aes_reg2hw_data_out_mreg_t [3:0] data_out; 
+    aes_reg2hw_ctrl_shadowed_reg_t ctrl_shadowed; 
+    aes_reg2hw_ctrl_aux_shadowed_reg_t ctrl_aux_shadowed; 
+    aes_reg2hw_trigger_reg_t trigger; 
+    aes_reg2hw_status_reg_t status; 
+    aes_reg2hw_ctrl_gcm_shadowed_reg_t ctrl_gcm_shadowed; 
+  } aes_reg2hw_t;
+  
+  typedef struct packed {
+    aes_hw2reg_key_share0_mreg_t [7:0] key_share0; 
+    aes_hw2reg_key_share1_mreg_t [7:0] key_share1; 
+    aes_hw2reg_iv_mreg_t [3:0] iv; 
+    aes_hw2reg_data_in_mreg_t [3:0] data_in; 
+    aes_hw2reg_data_out_mreg_t [3:0] data_out; 
+    aes_hw2reg_ctrl_shadowed_reg_t ctrl_shadowed; 
+    aes_hw2reg_trigger_reg_t trigger; 
+    aes_hw2reg_status_reg_t status; 
+    aes_hw2reg_ctrl_gcm_shadowed_reg_t ctrl_gcm_shadowed; 
+  } aes_hw2reg_t;
+  
+  parameter logic [BlockAw-1:0] AES_ALERT_TEST_OFFSET = 8'h 0;
+  parameter logic [BlockAw-1:0] AES_KEY_SHARE0_0_OFFSET = 8'h 4;
+  parameter logic [BlockAw-1:0] AES_KEY_SHARE0_1_OFFSET = 8'h 8;
+  parameter logic [BlockAw-1:0] AES_KEY_SHARE0_2_OFFSET = 8'h c;
+  parameter logic [BlockAw-1:0] AES_KEY_SHARE0_3_OFFSET = 8'h 10;
+  parameter logic [BlockAw-1:0] AES_KEY_SHARE0_4_OFFSET = 8'h 14;
+  parameter logic [BlockAw-1:0] AES_KEY_SHARE0_5_OFFSET = 8'h 18;
+  parameter logic [BlockAw-1:0] AES_KEY_SHARE0_6_OFFSET = 8'h 1c;
+  parameter logic [BlockAw-1:0] AES_KEY_SHARE0_7_OFFSET = 8'h 20;
+  parameter logic [BlockAw-1:0] AES_KEY_SHARE1_0_OFFSET = 8'h 24;
+  parameter logic [BlockAw-1:0] AES_KEY_SHARE1_1_OFFSET = 8'h 28;
+  parameter logic [BlockAw-1:0] AES_KEY_SHARE1_2_OFFSET = 8'h 2c;
+  parameter logic [BlockAw-1:0] AES_KEY_SHARE1_3_OFFSET = 8'h 30;
+  parameter logic [BlockAw-1:0] AES_KEY_SHARE1_4_OFFSET = 8'h 34;
+  parameter logic [BlockAw-1:0] AES_KEY_SHARE1_5_OFFSET = 8'h 38;
+  parameter logic [BlockAw-1:0] AES_KEY_SHARE1_6_OFFSET = 8'h 3c;
+  parameter logic [BlockAw-1:0] AES_KEY_SHARE1_7_OFFSET = 8'h 40;
+  parameter logic [BlockAw-1:0] AES_IV_0_OFFSET = 8'h 44;
+  parameter logic [BlockAw-1:0] AES_IV_1_OFFSET = 8'h 48;
+  parameter logic [BlockAw-1:0] AES_IV_2_OFFSET = 8'h 4c;
+  parameter logic [BlockAw-1:0] AES_IV_3_OFFSET = 8'h 50;
+  parameter logic [BlockAw-1:0] AES_DATA_IN_0_OFFSET = 8'h 54;
+  parameter logic [BlockAw-1:0] AES_DATA_IN_1_OFFSET = 8'h 58;
+  parameter logic [BlockAw-1:0] AES_DATA_IN_2_OFFSET = 8'h 5c;
+  parameter logic [BlockAw-1:0] AES_DATA_IN_3_OFFSET = 8'h 60;
+  parameter logic [BlockAw-1:0] AES_DATA_OUT_0_OFFSET = 8'h 64;
+  parameter logic [BlockAw-1:0] AES_DATA_OUT_1_OFFSET = 8'h 68;
+  parameter logic [BlockAw-1:0] AES_DATA_OUT_2_OFFSET = 8'h 6c;
+  parameter logic [BlockAw-1:0] AES_DATA_OUT_3_OFFSET = 8'h 70;
+  parameter logic [BlockAw-1:0] AES_CTRL_SHADOWED_OFFSET = 8'h 74;
+  parameter logic [BlockAw-1:0] AES_CTRL_AUX_SHADOWED_OFFSET = 8'h 78;
+  parameter logic [BlockAw-1:0] AES_CTRL_AUX_REGWEN_OFFSET = 8'h 7c;
+  parameter logic [BlockAw-1:0] AES_TRIGGER_OFFSET = 8'h 80;
+  parameter logic [BlockAw-1:0] AES_STATUS_OFFSET = 8'h 84;
+  parameter logic [BlockAw-1:0] AES_CTRL_GCM_SHADOWED_OFFSET = 8'h 88;
+  
+  parameter logic [1:0] AES_ALERT_TEST_RESVAL = 2'h 0;
+  parameter logic [0:0] AES_ALERT_TEST_RECOV_CTRL_UPDATE_ERR_RESVAL = 1'h 0;
+  parameter logic [0:0] AES_ALERT_TEST_FATAL_FAULT_RESVAL = 1'h 0;
+  parameter logic [31:0] AES_KEY_SHARE0_0_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_KEY_SHARE0_0_KEY_SHARE0_0_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_KEY_SHARE0_1_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_KEY_SHARE0_1_KEY_SHARE0_1_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_KEY_SHARE0_2_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_KEY_SHARE0_2_KEY_SHARE0_2_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_KEY_SHARE0_3_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_KEY_SHARE0_3_KEY_SHARE0_3_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_KEY_SHARE0_4_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_KEY_SHARE0_4_KEY_SHARE0_4_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_KEY_SHARE0_5_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_KEY_SHARE0_5_KEY_SHARE0_5_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_KEY_SHARE0_6_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_KEY_SHARE0_6_KEY_SHARE0_6_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_KEY_SHARE0_7_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_KEY_SHARE0_7_KEY_SHARE0_7_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_KEY_SHARE1_0_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_KEY_SHARE1_0_KEY_SHARE1_0_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_KEY_SHARE1_1_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_KEY_SHARE1_1_KEY_SHARE1_1_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_KEY_SHARE1_2_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_KEY_SHARE1_2_KEY_SHARE1_2_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_KEY_SHARE1_3_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_KEY_SHARE1_3_KEY_SHARE1_3_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_KEY_SHARE1_4_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_KEY_SHARE1_4_KEY_SHARE1_4_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_KEY_SHARE1_5_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_KEY_SHARE1_5_KEY_SHARE1_5_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_KEY_SHARE1_6_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_KEY_SHARE1_6_KEY_SHARE1_6_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_KEY_SHARE1_7_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_KEY_SHARE1_7_KEY_SHARE1_7_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_IV_0_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_IV_0_IV_0_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_IV_1_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_IV_1_IV_1_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_IV_2_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_IV_2_IV_2_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_IV_3_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_IV_3_IV_3_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_DATA_OUT_0_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_DATA_OUT_0_DATA_OUT_0_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_DATA_OUT_1_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_DATA_OUT_1_DATA_OUT_1_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_DATA_OUT_2_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_DATA_OUT_2_DATA_OUT_2_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_DATA_OUT_3_RESVAL = 32'h 0;
+  parameter logic [31:0] AES_DATA_OUT_3_DATA_OUT_3_RESVAL = 32'h 0;
+  parameter logic [15:0] AES_CTRL_SHADOWED_RESVAL = 16'h 11fd;
+  parameter logic [1:0] AES_CTRL_SHADOWED_OPERATION_RESVAL = 2'h 1;
+  parameter logic [5:0] AES_CTRL_SHADOWED_MODE_RESVAL = 6'h 3f;
+  parameter logic [2:0] AES_CTRL_SHADOWED_KEY_LEN_RESVAL = 3'h 1;
+  parameter logic [0:0] AES_CTRL_SHADOWED_SIDELOAD_RESVAL = 1'h 0;
+  parameter logic [2:0] AES_CTRL_SHADOWED_PRNG_RESEED_RATE_RESVAL = 3'h 1;
+  parameter logic [0:0] AES_CTRL_SHADOWED_MANUAL_OPERATION_RESVAL = 1'h 0;
+  parameter logic [10:0] AES_CTRL_GCM_SHADOWED_RESVAL = 11'h 401;
+  parameter logic [5:0] AES_CTRL_GCM_SHADOWED_PHASE_RESVAL = 6'h 1;
+  parameter logic [4:0] AES_CTRL_GCM_SHADOWED_NUM_VALID_BYTES_RESVAL = 5'h 10;
+  
+  typedef enum int {
+    AES_ALERT_TEST,
+    AES_KEY_SHARE0_0,
+    AES_KEY_SHARE0_1,
+    AES_KEY_SHARE0_2,
+    AES_KEY_SHARE0_3,
+    AES_KEY_SHARE0_4,
+    AES_KEY_SHARE0_5,
+    AES_KEY_SHARE0_6,
+    AES_KEY_SHARE0_7,
+    AES_KEY_SHARE1_0,
+    AES_KEY_SHARE1_1,
+    AES_KEY_SHARE1_2,
+    AES_KEY_SHARE1_3,
+    AES_KEY_SHARE1_4,
+    AES_KEY_SHARE1_5,
+    AES_KEY_SHARE1_6,
+    AES_KEY_SHARE1_7,
+    AES_IV_0,
+    AES_IV_1,
+    AES_IV_2,
+    AES_IV_3,
+    AES_DATA_IN_0,
+    AES_DATA_IN_1,
+    AES_DATA_IN_2,
+    AES_DATA_IN_3,
+    AES_DATA_OUT_0,
+    AES_DATA_OUT_1,
+    AES_DATA_OUT_2,
+    AES_DATA_OUT_3,
+    AES_CTRL_SHADOWED,
+    AES_CTRL_AUX_SHADOWED,
+    AES_CTRL_AUX_REGWEN,
+    AES_TRIGGER,
+    AES_STATUS,
+    AES_CTRL_GCM_SHADOWED
+  } aes_id_e;
+  
+  parameter logic [3:0] AES_PERMIT [35] = '{
+    4'b 0001, 
+    4'b 1111, 
+    4'b 1111, 
+    4'b 1111, 
+    4'b 1111, 
+    4'b 1111, 
+    4'b 1111, 
+    4'b 1111, 
+    4'b 1111, 
+    4'b 1111, 
+    4'b 1111, 
+    4'b 1111, 
+    4'b 1111, 
+    4'b 1111, 
+    4'b 1111, 
+    4'b 1111, 
+    4'b 1111, 
+    4'b 1111, 
+    4'b 1111, 
+    4'b 1111, 
+    4'b 1111, 
+    4'b 1111, 
+    4'b 1111, 
+    4'b 1111, 
+    4'b 1111, 
+    4'b 1111, 
+    4'b 1111, 
+    4'b 1111, 
+    4'b 1111, 
+    4'b 0011, 
+    4'b 0001, 
+    4'b 0001, 
+    4'b 0001, 
+    4'b 0001, 
+    4'b 0011  
+  };
+endpackage
+
+`ifndef PRIM_ASSERT_SV
+`define PRIM_ASSERT_SV
+`define ASSERT_DEFAULT_CLK clk_i
+`define ASSERT_DEFAULT_RST !rst_ni
+`define PRIM_STRINGIFY(__x) `"__x`"
+`define ASSERT_ERROR(__name)                                                             \
+`ifdef UVM                                                                               \
+  uvm_pkg::uvm_report_error("ASSERT FAILED", `PRIM_STRINGIFY(__name), uvm_pkg::UVM_NONE, \
+                            `__FILE__, `__LINE__, "", 1);                                \
+`else                                                                                    \
+  $error("%0t: (%0s:%0d) [%m] [ASSERT FAILED] %0s", $time, `__FILE__, `__LINE__,         \
+         `PRIM_STRINGIFY(__name));                                                       \
+`endif
+`define ASSERT_STATIC_LINT_ERROR(__name, __prop)     \
+  localparam int __name = (__prop) ? 1 : 2;          \
+  always_comb begin                                  \
+    logic unused_assert_static_lint_error;           \
+    unused_assert_static_lint_error = __name'(1'b1); \
+  end
+`define ASSERT_STATIC_IN_PACKAGE(__name, __prop)              \
+  function automatic bit assert_static_in_package_``__name(); \
+    bit unused_bit [((__prop) ? 1 : -1)];                     \
+    unused_bit = '{default: 1'b0};                            \
+    return unused_bit[0];                                     \
+  endfunction
+`ifdef VERILATOR
+ `include "prim_assert_dummy_macros.svh"`elsif SYNTHESIS
+ `include "prim_assert_dummy_macros.svh"`elsif YOSYS
+ `include "prim_assert_yosys_macros.svh"
+ `define INC_ASSERT`else
+ 
+`define ASSERT_I(__name, __prop) \
+  __name: assert (__prop)        \
+    else begin                   \
+      `ASSERT_ERROR(__name)      \
+    end
+`define ASSERT_INIT(__name, __prop)                                                  \
+`ifdef FPV_ON                                                                        \
+  if (!(__prop)) $fatal(2, "Fatal static assertion [%s]: (%s) is not true.",         \
+                        (__name), (__prop));                                         \
+`else                                                                                \
+  initial begin                                                                      \
+    __name: assert (__prop)                                                          \
+      else begin                                                                     \
+        `ASSERT_ERROR(__name)                                                        \
+      end                                                                            \
+  end                                                                                \
+`endif
+`define ASSERT_INIT_NET(__name, __prop)                                                   \
+  initial begin                                                                      \
+    
+    
+    
+    #1ps;                                                                            \
+    __name: assert (__prop)                                                          \
+      else begin                                                                     \
+        `ASSERT_ERROR(__name)                                                        \
+      end                                                                            \
+  end                                                                                \
+`define ASSERT_FINAL(__name, __prop)                                         \
+`ifndef FPV_ON                                                               \
+  final begin                                                                \
+    __name: assert (__prop || $test$plusargs("disable_assert_final_checks")) \
+      else begin                                                             \
+        `ASSERT_ERROR(__name)                                                \
+      end                                                                    \
+  end                                                                        \
+`endif
+`define ASSERT_AT_RESET(__name, __prop, __rst = `ASSERT_DEFAULT_RST)          \
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+`ifndef FPV_ON                                                                \
+  __name: assert property (@(posedge __rst) $isunknown(__rst) || (__prop))    \
+`else                                                                         \
+  __name: assert property (@(posedge __rst) (__prop))                         \
+`endif                                                                        \
+    else begin                                                                \
+      `ASSERT_ERROR(__name)                                                   \
+    end
+`define ASSERT_AT_RESET_AND_FINAL(__name, __prop, __rst = `ASSERT_DEFAULT_RST) \
+    `ASSERT_AT_RESET(AtReset_``__name``, __prop, __rst)                        \
+    `ASSERT_FINAL(Final_``__name``, __prop)
+`define ASSERT(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: assert property (@(posedge __clk) disable iff ((__rst) !== '0) (__prop))       \
+    else begin                                                                           \
+      `ASSERT_ERROR(__name)                                                              \
+    end
+`define ASSERT_NEVER(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: assert property (@(posedge __clk) disable iff ((__rst) !== '0) not (__prop))         \
+    else begin                                                                                 \
+      `ASSERT_ERROR(__name)                                                                    \
+    end
+`define ASSERT_KNOWN(__name, __sig, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifndef FPV_ON                                                                                \
+  `ASSERT(__name, !$isunknown(__sig), __clk, __rst)                                           \
+`endif
+`define COVER(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: cover property (@(posedge __clk) disable iff ((__rst) !== '0) (__prop));
+`define ASSUME(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: assume property (@(posedge __clk) disable iff ((__rst) !== '0) (__prop))       \
+    else begin                                                                           \
+      `ASSERT_ERROR(__name)                                                              \
+    end
+`define ASSUME_I(__name, __prop) \
+  __name: assume (__prop)        \
+    else begin                   \
+      `ASSERT_ERROR(__name)      \
+    end
+ `define INC_ASSERT
+`endif
+`define ASSERT_PULSE(__name, __sig, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  `ASSERT(__name, $rose(__sig) |=> !(__sig), __clk, __rst)
+`define ASSERT_IF(__name, __prop, __enable, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  `ASSERT(__name, (__enable) |-> (__prop), __clk, __rst)
+`define ASSERT_KNOWN_IF(__name, __sig, __enable, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifndef FPV_ON                                                                                             \
+  `ASSERT_KNOWN(__name``KnownEnable, __enable, __clk, __rst)                                               \
+  `ASSERT_IF(__name, !$isunknown(__sig), __enable, __clk, __rst)                                           \
+`endif
+`define ASSUME_FPV(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifdef FPV_ON                                                                                \
+   `ASSUME(__name, __prop, __clk, __rst)                                                     \
+`endif
+`define ASSUME_I_FPV(__name, __prop) \
+`ifdef FPV_ON                        \
+   `ASSUME_I(__name, __prop)         \
+`endif
+`define COVER_FPV(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifdef FPV_ON                                                                               \
+   `COVER(__name, __prop, __clk, __rst)                                                     \
+`endif
+`define ASSERT_FPV_LINEAR_FSM(__name, __state, __type, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  `ifdef INC_ASSERT                                                                                              \
+     bit __name``_cond;                                                                                          \
+     always_ff @(posedge __clk or posedge __rst) begin                                                           \
+       if (__rst) begin                                                                                          \
+         __name``_cond <= 0;                                                                                     \
+       end else begin                                                                                            \
+         __name``_cond <= 1;                                                                                     \
+       end                                                                                                       \
+     end                                                                                                         \
+     property __name``_p;                                                                                        \
+       __type initial_state;                                                                                     \
+       (!$stable(__state) & __name``_cond, initial_state = $past(__state)) |->                                   \
+           (__state != initial_state) until !(__name``_cond);                                                    \
+     endproperty                                                                                                 \
+   `ASSERT(__name, __name``_p, __clk, 0)                                                                         \
+  `endif
+`ifndef PRIM_ASSERT_SEC_CM_SVH
+`define PRIM_ASSERT_SEC_CM_SVH
+`define _SEC_CM_ALERT_MAX_CYC 30
+`define ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, ERR_NAME_, CLK_, RST_) \
+  `ASSERT(FpvSecCm``NAME_``,                                                                    \
+          $rose(HIER_.ERR_NAME_) && !(GATE_) |-> ##[0:MAX_CYCLES_] (ERR_),                      \
+          CLK_, RST_)                                                                           \
+  `ifdef INC_ASSERT                                                                             \
+    assign HIER_.unused_assert_connected = 1'b1;                                                \
+  `endif
+`define ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, ERR_NAME_)    \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, (ALERT_.alert_p), GATE_, MAX_CYCLES_, ERR_NAME_, \
+                            `ASSERT_DEFAULT_CLK, `ASSERT_DEFAULT_RST)                      \
+  `ASSUME_FPV(``NAME_``TriggerAfterAlertInit_S,                                            \
+              $stable(rst_ni) == 0 |-> HIER_.ERR_NAME_ == 0 [*10])
+`define ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_IN_, GATE_, MAX_CYCLES_, ERR_NAME_) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ALERT_IN_, GATE_, MAX_CYCLES_, ERR_NAME_,           \
+                            `ASSERT_DEFAULT_CLK, `ASSERT_DEFAULT_RST)
+`define ASSERT_PRIM_COUNT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_DOUBLE_LFSR_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_FSM_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, unused_err_o)
+`define ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_REG_WE_ONEHOT_ERROR_TRIGGER_ALERT(NAME_, REG_TOP_HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT(NAME_, \
+    REG_TOP_HIER_.u_prim_reg_we_check.u_prim_onehot_check, ALERT_, GATE_, MAX_CYCLES_)
+`define ASSERT_PRIM_FIFO_SYNC_SINGLETON_ERROR_TRIGGER_ALERT(NAME, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_COUNT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_DOUBLE_LFSR_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_FSM_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, unused_err_o)
+`define ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_REG_WE_ONEHOT_ERROR_TRIGGER_ALERT_IN(NAME_, REG_TOP_HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT_IN(NAME_, \
+    REG_TOP_HIER_.u_prim_reg_we_check.u_prim_onehot_check, ALERT_, GATE_, MAX_CYCLES_)
+`define ASSERT_PRIM_FIFO_SYNC_SINGLETON_ERROR_TRIGGER_ALERT_IN(NAME, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_FSM_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = 2, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, unused_err_o, CLK_, RST_)
+`define ASSERT_PRIM_COUNT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = 2, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, err_o, CLK_, RST_)
+`define ASSERT_PRIM_DOUBLE_LFSR_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = 2, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, err_o, CLK_, RST_)
+`define ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, err_o, CLK_, RST_)
+`define ASSERT_PRIM_REG_WE_ONEHOT_ERROR_TRIGGER_ERR(NAME_, REG_TOP_HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ERR(NAME_, \
+    REG_TOP_HIER_.u_prim_reg_we_check.u_prim_onehot_check, ERR_, GATE_, MAX_CYCLES_, CLK_, RST_)
+`endif 
+`ifndef PRIM_FLOP_MACROS_SV
+`define PRIM_FLOP_MACROS_SV
+`define PRIM_FLOP_CLK clk_i
+`define PRIM_FLOP_RST rst_ni
+`define PRIM_FLOP_RESVAL '0
+`define PRIM_FLOP_A(__d, __q, __resval = `PRIM_FLOP_RESVAL, __clk = `PRIM_FLOP_CLK, __rst_n = `PRIM_FLOP_RST) \
+  always_ff @(posedge __clk or negedge __rst_n) begin \
+    if (!__rst_n) begin                               \
+      __q <= __resval;                                \
+    end else begin                                    \
+      __q <= __d;                                     \
+    end                                               \
+  end
+`define PRIM_FLOP_SPARSE_FSM(__name, __d, __q, __type, __resval = `PRIM_FLOP_RESVAL, __clk = `PRIM_FLOP_CLK, __rst_n = `PRIM_FLOP_RST, __alert_trigger_sva_en = 1) \
+  `ifdef SIMULATION                                   \
+    prim_sparse_fsm_flop #(                           \
+      .StateEnumT(__type),                            \
+      .Width($bits(__type)),                          \
+      .ResetValue($bits(__type)'(__resval)),          \
+      .EnableAlertTriggerSVA(__alert_trigger_sva_en), \
+      .CustomForceName(`PRIM_STRINGIFY(__q))          \
+    ) __name (                                        \
+      .clk_i   ( __clk   ),                           \
+      .rst_ni  ( __rst_n ),                           \
+      .state_i ( __d     ),                           \
+      .state_o (         )                            \
+    );                                                \
+    `PRIM_FLOP_A(__d, __q, __resval, __clk, __rst_n)  \
+    `ASSERT(``__name``_A, __q === ``__name``.state_o) \
+  `else                                               \
+    prim_sparse_fsm_flop #(                           \
+      .StateEnumT(__type),                            \
+      .Width($bits(__type)),                          \
+      .ResetValue($bits(__type)'(__resval)),          \
+      .EnableAlertTriggerSVA(__alert_trigger_sva_en)  \
+    ) __name (                                        \
+      .clk_i   ( __clk   ),                           \
+      .rst_ni  ( __rst_n ),                           \
+      .state_i ( __d     ),                           \
+      .state_o ( __q     )                            \
+    );                                                \
+  `endif
+`endif 
+`endif 
+module aes_sbox import aes_pkg::*;
+#(
+  parameter sbox_impl_e SecSBoxImpl = SBoxImplLut
+) (
+  input  logic                     clk_i,
+  input  logic                     rst_ni,
+  input  logic                     en_i,
+  output logic                     out_req_o,
+  input  logic                     out_ack_i,
+  input  ciph_op_e                 op_i,
+  input  logic               [7:0] data_i,
+  input  logic               [7:0] mask_i,
+  input  logic [WidthPRDSBox+19:0] prd_i,
+  output logic               [7:0] data_o,
+  output logic               [7:0] mask_o,
+  output logic              [19:0] prd_o
+);
+  
+  
+  `ASSERT_STATIC_LINT_ERROR(AesSBoxSecSBoxImplNonDefault, SecSBoxImpl == SBoxImplDom)
+  localparam bit SBoxMasked = (SecSBoxImpl == SBoxImplCanrightMasked ||
+                               SecSBoxImpl == SBoxImplCanrightMaskedNoreuse ||
+                               SecSBoxImpl == SBoxImplDom) ? 1'b1 : 1'b0;
+  localparam bit SBoxSingleCycle = (SecSBoxImpl == SBoxImplDom) ? 1'b0 : 1'b1;
+  if (!SBoxMasked) begin : gen_sbox_unmasked
+    
+    logic                     unused_clk;
+    logic                     unused_rst;
+    logic               [7:0] unused_mask;
+    logic [WidthPRDSBox+19:0] unused_prd;
+    assign unused_clk  = clk_i;
+    assign unused_rst  = rst_ni;
+    assign unused_mask = mask_i;
+    assign unused_prd  = prd_i;
+    if (SecSBoxImpl == SBoxImplCanright) begin : gen_sbox_canright
+      aes_sbox_canright u_aes_sbox (
+        .op_i   ( op_i   ),
+        .data_i ( data_i ),
+        .data_o ( data_o )
+      );
+    end else begin : gen_sbox_lut 
+      aes_sbox_lut u_aes_sbox (
+        .op_i   ( op_i   ),
+        .data_i ( data_i ),
+        .data_o ( data_o )
+      );
+    end
+    assign mask_o = '0;
+    assign prd_o  = '0;
+  end else begin : gen_sbox_masked
+    
+    if (SecSBoxImpl == SBoxImplDom) begin : gen_sbox_dom
+      aes_sbox_dom u_aes_sbox (
+        .clk_i      ( clk_i       ),
+        .rst_ni     ( rst_ni      ),
+        .en_i       ( en_i        ),
+        .out_req_o  ( out_req_o   ),
+        .out_ack_i  ( out_ack_i   ),
+        .op_i       ( op_i        ),
+        .data_i     ( data_i      ),
+        .mask_i     ( mask_i      ),
+        .prd_i      ( prd_i[27:0] ),
+        .data_o     ( data_o      ),
+        .mask_o     ( mask_o      ),
+        .prd_o      ( prd_o       )
+      );
+      `ASSERT_INIT(AesWidthPRDSBox, WidthPRDSBox == 8)
+    end else if (SecSBoxImpl == SBoxImplCanrightMaskedNoreuse) begin :
+        gen_sbox_canright_masked_noreuse
+      
+      logic        unused_clk;
+      logic        unused_rst;
+      logic [19:0] unused_prd;
+      assign unused_clk = clk_i;
+      assign unused_rst = rst_ni;
+      assign unused_prd = prd_i[WidthPRDSBox+19:WidthPRDSBox];
+      aes_sbox_canright_masked_noreuse u_aes_sbox (
+        .op_i   ( op_i        ),
+        .data_i ( data_i      ),
+        .mask_i ( mask_i      ),
+        .prd_i  ( prd_i[17:0] ),
+        .data_o ( data_o      ),
+        .mask_o ( mask_o      )
+      );
+      assign prd_o = '0;
+      `ASSERT_INIT(AesWidthPRDSBox, WidthPRDSBox == 18)
+    end else begin : gen_sbox_canright_masked 
+      
+      logic        unused_clk;
+      logic        unused_rst;
+      logic [19:0] unused_prd;
+      assign unused_clk = clk_i;
+      assign unused_rst = rst_ni;
+      assign unused_prd = prd_i[WidthPRDSBox+19:WidthPRDSBox];
+      aes_sbox_canright_masked u_aes_sbox (
+        .op_i   ( op_i       ),
+        .data_i ( data_i     ),
+        .mask_i ( mask_i     ),
+        .prd_i  ( prd_i[7:0] ),
+        .data_o ( data_o     ),
+        .mask_o ( mask_o     )
+      );
+      assign prd_o = '0;
+      `ASSERT_INIT(AesWidthPRDSBox, WidthPRDSBox == 8)
+    end
+  end
+  if (SBoxSingleCycle) begin : gen_req_singlecycle
+    
+    logic unused_out_ack;
+    assign unused_out_ack = out_ack_i;
+    
+    assign out_req_o = en_i;
+  end
+endmodule
+
+module aes_sbox_canright (
+  input  aes_pkg::ciph_op_e op_i,
+  input  logic [7:0]        data_i,
+  output logic [7:0]        data_o
+);
+  import aes_pkg::*;
+  import aes_sbox_canright_pkg::*;
+  
+  
+  
+  
+  
+  function automatic logic [3:0] aes_inverse_gf2p4(logic [3:0] gamma);
+    logic [3:0] delta;
+    logic [1:0] a, b, c, d;
+    a          = gamma[3:2] ^ gamma[1:0];
+    b          = aes_mul_gf2p2(gamma[3:2], gamma[1:0]);
+    c          = aes_scale_omega2_gf2p2(aes_square_gf2p2(a));
+    d          = aes_square_gf2p2(c ^ b);
+    delta[3:2] = aes_mul_gf2p2(d, gamma[1:0]);
+    delta[1:0] = aes_mul_gf2p2(d, gamma[3:2]);
+    return delta;
+  endfunction
+  
+  
+  function automatic logic [7:0] aes_inverse_gf2p8(logic [7:0] gamma);
+    logic [7:0] delta;
+    logic [3:0] a, b, c, d;
+    a          = gamma[7:4] ^ gamma[3:0];
+    b          = aes_mul_gf2p4(gamma[7:4], gamma[3:0]);
+    c          = aes_square_scale_gf2p4_gf2p2(a);
+    d          = aes_inverse_gf2p4(c ^ b);
+    delta[7:4] = aes_mul_gf2p4(d, gamma[3:0]);
+    delta[3:0] = aes_mul_gf2p4(d, gamma[7:4]);
+    return delta;
+  endfunction
+  
+  
+  
+  logic [7:0] data_basis_x, data_inverse;
+  
+  assign data_basis_x = (op_i == CIPH_FWD) ? aes_mvm(data_i, A2X)         :
+                        (op_i == CIPH_INV) ? aes_mvm(data_i ^ 8'h63, S2X) :
+                                             aes_mvm(data_i, A2X);
+  
+  assign data_inverse = aes_inverse_gf2p8(data_basis_x);
+  
+  assign data_o       = (op_i == CIPH_FWD) ? aes_mvm(data_inverse, X2S) ^ 8'h63 :
+                        (op_i == CIPH_INV) ? aes_mvm(data_inverse, X2A) :
+                                             aes_mvm(data_inverse, X2S) ^ 8'h63;
+endmodule
+
+module aes_masked_inverse_gf2p4 (
+  input  logic [3:0] b,
+  input  logic [3:0] q,
+  input  logic [1:0] r,
+  input  logic [3:0] m1,
+  output logic [3:0] b_inv
+);
+  import aes_pkg::*;
+  import aes_sbox_canright_pkg::*;
+  logic [1:0] b1, b0, q1, q0, c_inv, r_sq, m11, m10;
+  assign b1  = b[3:2];
+  assign b0  = b[1:0];
+  assign q1  = q[3:2];
+  assign q0  = q[1:0];
+  assign m11 = m1[3:2];
+  assign m10 = m1[1:0];
+  
+  logic [1:0] mul_b0_q1, mul_b1_q0, mul_q1_q0;
+  assign mul_b0_q1 = aes_mul_gf2p2(b0, q1);
+  assign mul_b1_q0 = aes_mul_gf2p2(b1, q0);
+  assign mul_q1_q0 = aes_mul_gf2p2(q1, q0);
+  
+  logic [1:0] mul_b0_q1_buf, mul_b1_q0_buf, mul_q1_q0_buf;
+  prim_buf #(
+    .Width ( 6 )
+  ) u_prim_buf_mul_bq01 (
+    .in_i  ( {mul_b0_q1,     mul_b1_q0,     mul_q1_q0}     ),
+    .out_o ( {mul_b0_q1_buf, mul_b1_q0_buf, mul_q1_q0_buf} )
+  );
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  logic [1:0] scale_omega2_b, scale_omega2_q;
+  logic [1:0] mul_b1_b0;
+  assign scale_omega2_b = aes_scale_omega2_gf2p2(aes_square_gf2p2(b1 ^ b0));
+  assign scale_omega2_q = aes_scale_omega2_gf2p2(aes_square_gf2p2(q1 ^ q0));
+  assign mul_b1_b0 = aes_mul_gf2p2(b1, b0);
+  
+  
+  logic [1:0] scale_omega2_b_buf, scale_omega2_q_buf;
+  prim_buf #(
+    .Width ( 4 )
+  ) u_prim_buf_scale_omega2_bq (
+    .in_i  ( {scale_omega2_b,     scale_omega2_q}     ),
+    .out_o ( {scale_omega2_b_buf, scale_omega2_q_buf} )
+  );
+  logic [1:0] mul_b1_b0_buf;
+  prim_buf #(
+    .Width ( 2 )
+  ) u_prim_buf_mul_b1_b0 (
+    .in_i  ( mul_b1_b0     ),
+    .out_o ( mul_b1_b0_buf )
+  );
+  
+  logic [1:0] c [6];
+  logic [1:0] c_buf [6];
+  assign c[0] = r        ^ scale_omega2_b_buf;
+  assign c[1] = c_buf[0] ^ scale_omega2_q_buf;
+  assign c[2] = c_buf[1] ^ mul_b1_b0_buf;
+  assign c[3] = c_buf[2] ^ mul_b1_q0_buf;
+  assign c[4] = c_buf[3] ^ mul_b0_q1_buf;
+  assign c[5] = c_buf[4] ^ mul_q1_q0_buf;
+  
+  for (genvar i = 0; i < 6; i++) begin : gen_c_buf
+    prim_buf #(
+      .Width ( 2 )
+    ) u_prim_buf_c_i (
+      .in_i  ( c[i]     ),
+      .out_o ( c_buf[i] )
+    );
+  end
+  
+  
+  
+  
+  
+  assign c_inv = aes_square_gf2p2(c_buf[5]);
+  assign r_sq  = aes_square_gf2p2(r);
+  
+  
+  
+  
+  
+  
+  
+  
+  logic [1:0] xor_q1_r_sq, xor_q0_q1, c1_inv, c2_inv;
+  prim_xor2 #(
+    .Width ( 2 )
+  ) u_prim_xor_q1_r_sq (
+    .in0_i ( q1          ),
+    .in1_i ( r_sq        ),
+    .out_o ( xor_q1_r_sq )
+  );
+  prim_xor2 #(
+    .Width ( 2 )
+  ) u_prim_xor_q0_q1 (
+    .in0_i ( q0        ),
+    .in1_i ( q1        ),
+    .out_o ( xor_q0_q1 )
+  );
+  
+  prim_xor2 #(
+    .Width ( 2 )
+  ) u_prim_c1_inv (
+    .in0_i ( xor_q1_r_sq ),
+    .in1_i ( c_inv       ),
+    .out_o ( c1_inv      )
+  );
+  prim_xor2 #(
+    .Width ( 2 )
+  ) u_prim_c2_inv (
+    .in0_i ( c1_inv    ),
+    .in1_i ( xor_q0_q1 ),
+    .out_o ( c2_inv    )
+  );
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  logic [1:0] mul_b0_c1_inv, mul_q0_c1_inv, mul_b1_c2_inv, mul_q1_c2_inv;
+  assign mul_b0_c1_inv = aes_mul_gf2p2(b0, c1_inv);
+  assign mul_q0_c1_inv = aes_mul_gf2p2(q0, c1_inv);
+  assign mul_b1_c2_inv = aes_mul_gf2p2(b1, c2_inv);
+  assign mul_q1_c2_inv = aes_mul_gf2p2(q1, c2_inv);
+  
+  
+  logic [1:0] mul_b0_c1_inv_buf, mul_q0_c1_inv_buf, mul_b1_c2_inv_buf, mul_q1_c2_inv_buf;
+  prim_buf #(
+    .Width ( 8 )
+  ) u_prim_buf_mul_bq01_c12_inv (
+    .in_i  ( {mul_b0_c1_inv,     mul_q0_c1_inv,     mul_b1_c2_inv,     mul_q1_c2_inv}     ),
+    .out_o ( {mul_b0_c1_inv_buf, mul_q0_c1_inv_buf, mul_b1_c2_inv_buf, mul_q1_c2_inv_buf} )
+  );
+  
+  logic [1:0] b1_inv [4];
+  logic [1:0] b1_inv_buf [4];
+  logic [1:0] b0_inv [4];
+  logic [1:0] b0_inv_buf [4];
+  assign b1_inv[0] = m11           ^ mul_b0_c1_inv_buf;
+  assign b1_inv[1] = b1_inv_buf[0] ^ mul_b0_q1_buf;
+  assign b1_inv[2] = b1_inv_buf[1] ^ mul_q0_c1_inv_buf;
+  assign b1_inv[3] = b1_inv_buf[2] ^ mul_q1_q0_buf;
+  assign b0_inv[0] = m10           ^ mul_b1_c2_inv_buf;
+  assign b0_inv[1] = b0_inv_buf[0] ^ mul_b1_q0_buf;
+  assign b0_inv[2] = b0_inv_buf[1] ^ mul_q1_c2_inv_buf;
+  assign b0_inv[3] = b0_inv_buf[2] ^ mul_q1_q0_buf;
+  
+  for (genvar i = 0; i < 4; i++) begin : gen_a01_inv_buf
+    prim_buf #(
+      .Width ( 2 )
+    ) u_prim_buf_b1_inv_i (
+      .in_i  ( b1_inv[i]     ),
+      .out_o ( b1_inv_buf[i] )
+    );
+    prim_buf #(
+      .Width ( 2 )
+    ) u_prim_buf_b0_inv_i (
+      .in_i  ( b0_inv[i]     ),
+      .out_o ( b0_inv_buf[i] )
+    );
+  end
+  
+  assign b_inv = {b1_inv_buf[3], b0_inv_buf[3]};
+endmodule
+module aes_masked_inverse_gf2p8 (
+  input  logic [7:0] a,
+  input  logic [7:0] m,
+  input  logic [7:0] n,
+  output logic [7:0] a_inv
+);
+  import aes_pkg::*;
+  import aes_sbox_canright_pkg::*;
+  logic [3:0] a1, a0, m1, m0, q, b_inv, s1, s0;
+  logic [1:0] r;
+  assign a1 = a[7:4];
+  assign a0 = a[3:0];
+  assign m1 = m[7:4];
+  assign m0 = m[3:0];
+  
+  
+  
+  
+  
+  
+  
+  assign r = m1[3:2];
+  assign q = n[7:4];
+  assign s1 = n[7:4];
+  assign s0 = n[3:0];
+  
+  logic [3:0] mul_a0_m1, mul_a1_m0, mul_m0_m1;
+  assign mul_a0_m1 = aes_mul_gf2p4(a0, m1);
+  assign mul_a1_m0 = aes_mul_gf2p4(a1, m0);
+  assign mul_m0_m1 = aes_mul_gf2p4(m0, m1);
+  
+  logic [3:0] mul_a0_m1_buf, mul_a1_m0_buf, mul_m0_m1_buf;
+  prim_buf #(
+    .Width ( 12 )
+  ) u_prim_buf_mul_bq01 (
+    .in_i  ( {mul_a0_m1,     mul_a1_m0,     mul_m0_m1}     ),
+    .out_o ( {mul_a0_m1_buf, mul_a1_m0_buf, mul_m0_m1_buf} )
+  );
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  logic [3:0] ss_a1_a0, ss_m1_m0;
+  assign ss_a1_a0 = aes_square_scale_gf2p4_gf2p2(a1 ^ a0);
+  assign ss_m1_m0 = aes_square_scale_gf2p4_gf2p2(m1 ^ m0);
+  logic [3:0] mul_a1_a0;
+  assign mul_a1_a0 = aes_mul_gf2p4(a1, a0);
+  
+  
+  logic [3:0] mul_a1_a0_buf;
+  prim_buf #(
+    .Width ( 4 )
+  ) u_prim_buf_mul_am01 (
+    .in_i  ( mul_a1_a0     ),
+    .out_o ( mul_a1_a0_buf )
+  );
+  
+  logic [3:0] b [6];
+  logic [3:0] b_buf [6];
+  assign b[0] = q        ^ ss_a1_a0; 
+  assign b[1] = b_buf[0] ^ ss_m1_m0; 
+  assign b[2] = b_buf[1] ^ mul_a1_a0_buf;
+  assign b[3] = b_buf[2] ^ mul_a1_m0_buf;
+  assign b[4] = b_buf[3] ^ mul_a0_m1_buf;
+  assign b[5] = b_buf[4] ^ mul_m0_m1_buf;
+  
+  for (genvar i = 0; i < 6; i++) begin : gen_b_buf
+    prim_buf #(
+      .Width ( 4 )
+    ) u_prim_buf_b_i (
+      .in_i  ( b[i]     ),
+      .out_o ( b_buf[i] )
+    );
+  end
+  
+  
+  
+  
+  aes_masked_inverse_gf2p4 u_aes_masked_inverse_gf2p4 (
+    .b     ( b_buf[5] ),
+    .q     ( q        ),
+    .r     ( r        ),
+    .m1    ( m1       ),
+    .b_inv ( b_inv    )
+  );
+  
+  
+  
+  logic [3:0] b_inv_buf;
+  prim_buf #(
+    .Width ( 4 )
+  ) u_prim_buf_b_inv (
+    .in_i  ( b_inv     ),
+    .out_o ( b_inv_buf )
+  );
+  
+  
+  
+  
+  
+  
+  logic [3:0] xor_m1_m0, b2_inv;
+  prim_xor2 #(
+    .Width ( 4 )
+  ) u_prim_xor_m1_m0 (
+    .in0_i ( m1        ),
+    .in1_i ( m0        ),
+    .out_o ( xor_m1_m0 )
+  );
+  prim_xor2 #(
+    .Width ( 4 )
+  ) u_prim_xor_b2_inv (
+    .in0_i ( b_inv_buf ),
+    .in1_i ( xor_m1_m0 ),
+    .out_o ( b2_inv    )
+  );
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  logic [3:0] mul_a0_b_inv, mul_m0_b_inv, mul_a1_b2_inv, mul_m1_b2_inv;
+  assign mul_a0_b_inv  = aes_mul_gf2p4(a0, b_inv_buf);
+  assign mul_m0_b_inv  = aes_mul_gf2p4(m0, b_inv_buf);
+  assign mul_a1_b2_inv = aes_mul_gf2p4(a1, b2_inv);
+  assign mul_m1_b2_inv = aes_mul_gf2p4(m1, b2_inv);
+  
+  
+  logic [3:0] mul_a0_b_inv_buf, mul_m0_b_inv_buf, mul_a1_b2_inv_buf, mul_m1_b2_inv_buf;
+  prim_buf #(
+    .Width ( 16 )
+  ) u_prim_buf_mul_bq01_c12_inv (
+    .in_i  ( {mul_a0_b_inv,     mul_m0_b_inv,     mul_a1_b2_inv,     mul_m1_b2_inv}     ),
+    .out_o ( {mul_a0_b_inv_buf, mul_m0_b_inv_buf, mul_a1_b2_inv_buf, mul_m1_b2_inv_buf} )
+  );
+  
+  logic [3:0] a1_inv [4];
+  logic [3:0] a1_inv_buf [4];
+  logic [3:0] a0_inv [4];
+  logic [3:0] a0_inv_buf [4];
+  assign a1_inv[0] = s1            ^ mul_a0_b_inv_buf;
+  assign a1_inv[1] = a1_inv_buf[0] ^ mul_a0_m1_buf;
+  assign a1_inv[2] = a1_inv_buf[1] ^ mul_m0_b_inv_buf;
+  assign a1_inv[3] = a1_inv_buf[2] ^ mul_m0_m1_buf;
+  assign a0_inv[0] = s0            ^ mul_a1_b2_inv_buf; 
+  assign a0_inv[1] = a0_inv_buf[0] ^ mul_a1_m0_buf;
+  assign a0_inv[2] = a0_inv_buf[1] ^ mul_m1_b2_inv_buf;
+  assign a0_inv[3] = a0_inv_buf[2] ^ mul_m0_m1_buf;
+  
+  for (genvar i = 0; i < 4; i++) begin : gen_a01_inv_buf
+    prim_buf #(
+      .Width ( 4 )
+    ) u_prim_buf_a1_inv_i (
+      .in_i  ( a1_inv[i]     ),
+      .out_o ( a1_inv_buf[i] )
+    );
+    prim_buf #(
+      .Width ( 4 )
+    ) u_prim_buf_a0_inv_i (
+      .in_i  ( a0_inv[i]     ),
+      .out_o ( a0_inv_buf[i] )
+    );
+  end
+  
+  assign a_inv = {a1_inv_buf[3], a0_inv_buf[3]};
+endmodule
+module aes_sbox_canright_masked (
+  input  aes_pkg::ciph_op_e op_i,
+  input  logic [7:0]        data_i, 
+  input  logic [7:0]        mask_i, 
+  input  logic [7:0]        prd_i,  
+  output logic [7:0]        data_o, 
+  output logic [7:0]        mask_o  
+);
+  import aes_pkg::*;
+  import aes_sbox_canright_pkg::*;
+  
+  
+  
+  logic [7:0] in_data_basis_x, out_data_basis_x;
+  logic [7:0] in_mask_basis_x, out_mask_basis_x;
+  
+  assign in_data_basis_x = (op_i == CIPH_FWD) ? aes_mvm(data_i, A2X)         :
+                           (op_i == CIPH_INV) ? aes_mvm(data_i ^ 8'h63, S2X) :
+                                                aes_mvm(data_i, A2X);
+  
+  
+  assign mask_o = prd_i;
+  
+  
+  assign in_mask_basis_x  = (op_i == CIPH_FWD) ? aes_mvm(mask_i, A2X) :
+                            (op_i == CIPH_INV) ? aes_mvm(mask_i, S2X) :
+                                                 aes_mvm(mask_i, A2X);
+  
+  assign out_mask_basis_x = (op_i == CIPH_INV) ? aes_mvm(mask_o, A2X) :
+                            (op_i == CIPH_FWD) ? aes_mvm(mask_o, S2X) :
+                                                 aes_mvm(mask_o, S2X);
+  
+  aes_masked_inverse_gf2p8 u_aes_masked_inverse_gf2p8 (
+    .a     ( in_data_basis_x  ), 
+    .m     ( in_mask_basis_x  ), 
+    .n     ( out_mask_basis_x ), 
+    .a_inv ( out_data_basis_x )  
+  );
+  
+  assign data_o = (op_i == CIPH_FWD) ? (aes_mvm(out_data_basis_x, X2S) ^ 8'h63) :
+                  (op_i == CIPH_INV) ? (aes_mvm(out_data_basis_x, X2A))         :
+                                       (aes_mvm(out_data_basis_x, X2S) ^ 8'h63);
+endmodule
+
+module aes_masked_inverse_gf2p4_noreuse (
+  input  logic [3:0] b,
+  input  logic [3:0] q,
+  input  logic [1:0] r,
+  input  logic [3:0] t,
+  output logic [3:0] b_inv
+);
+  import aes_pkg::*;
+  import aes_sbox_canright_pkg::*;
+  logic [1:0] b1, b0, q1, q0, c_inv, r_sq, t1, t0;
+  assign b1 = b[3:2];
+  assign b0 = b[1:0];
+  assign q1 = q[3:2];
+  assign q0 = q[1:0];
+  assign t1 = t[3:2];
+  assign t0 = t[1:0];
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  logic [1:0] scale_omega2_b, scale_omega2_q;
+  logic [1:0] mul_b1_b0, mul_b1_q0, mul_b0_q1, mul_q1_q0;
+  assign scale_omega2_b = aes_scale_omega2_gf2p2(aes_square_gf2p2(b1 ^ b0));
+  assign scale_omega2_q = aes_scale_omega2_gf2p2(aes_square_gf2p2(q1 ^ q0));
+  assign mul_b1_b0 = aes_mul_gf2p2(b1, b0);
+  assign mul_b1_q0 = aes_mul_gf2p2(b1, q0);
+  assign mul_b0_q1 = aes_mul_gf2p2(b0, q1);
+  assign mul_q1_q0 = aes_mul_gf2p2(q1, q0);
+  
+  
+  logic [1:0] scale_omega2_b_buf, scale_omega2_q_buf;
+  prim_buf #(
+    .Width ( 4 )
+  ) u_prim_buf_scale_omega2_bq (
+    .in_i  ( {scale_omega2_b,     scale_omega2_q}     ),
+    .out_o ( {scale_omega2_b_buf, scale_omega2_q_buf} )
+  );
+  logic [1:0] mul_b1_b0_buf, mul_b1_q0_buf, mul_b0_q1_buf, mul_q1_q0_buf;
+  prim_buf #(
+    .Width ( 8 )
+  ) u_prim_buf_mul_bq01 (
+    .in_i  ( {mul_b1_b0,     mul_b1_q0,     mul_b0_q1,     mul_q1_q0}     ),
+    .out_o ( {mul_b1_b0_buf, mul_b1_q0_buf, mul_b0_q1_buf, mul_q1_q0_buf} )
+  );
+  
+  logic [1:0] c [6];
+  logic [1:0] c_buf [6];
+  assign c[0] = r        ^ scale_omega2_b_buf;
+  assign c[1] = c_buf[0] ^ scale_omega2_q_buf;
+  assign c[2] = c_buf[1] ^ mul_b1_b0_buf;
+  assign c[3] = c_buf[2] ^ mul_b1_q0_buf;
+  assign c[4] = c_buf[3] ^ mul_b0_q1_buf;
+  assign c[5] = c_buf[4] ^ mul_q1_q0_buf;
+  
+  for (genvar i = 0; i < 6; i++) begin : gen_c_buf
+    prim_buf #(
+      .Width ( 2 )
+    ) u_prim_buf_c_i (
+      .in_i  ( c[i]     ),
+      .out_o ( c_buf[i] )
+    );
+  end
+  
+  
+  
+  
+  
+  assign c_inv = aes_square_gf2p2(c_buf[5]);
+  assign r_sq  = aes_square_gf2p2(r);
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  logic [1:0] mul_b0_r_sq, mul_q0_c_inv, mul_q0_r_sq;
+  logic [1:0] mul_b1_r_sq, mul_q1_c_inv, mul_q1_r_sq;
+  assign mul_b0_r_sq  = aes_mul_gf2p2(b0, r_sq);
+  assign mul_q0_c_inv = aes_mul_gf2p2(q0, c_inv);
+  assign mul_q0_r_sq  = aes_mul_gf2p2(q0, r_sq);
+  assign mul_b1_r_sq  = aes_mul_gf2p2(b1, r_sq);
+  assign mul_q1_c_inv = aes_mul_gf2p2(q1, c_inv);
+  assign mul_q1_r_sq  = aes_mul_gf2p2(q1, r_sq);
+  
+  
+  logic [1:0] mul_b0_r_sq_buf, mul_q0_c_inv_buf, mul_q0_r_sq_buf;
+  prim_buf #(
+    .Width ( 6 )
+  ) u_prim_buf_mul_bq0 (
+    .in_i  ( {mul_b0_r_sq,     mul_q0_c_inv,     mul_q0_r_sq}     ),
+    .out_o ( {mul_b0_r_sq_buf, mul_q0_c_inv_buf, mul_q0_r_sq_buf} )
+  );
+  logic [1:0] mul_b1_r_sq_buf, mul_q1_c_inv_buf, mul_q1_r_sq_buf;
+  prim_buf #(
+    .Width ( 6 )
+  ) u_prim_buf_mul_bq1 (
+    .in_i  ( {mul_b1_r_sq,     mul_q1_c_inv,     mul_q1_r_sq}     ),
+    .out_o ( {mul_b1_r_sq_buf, mul_q1_c_inv_buf, mul_q1_r_sq_buf} )
+  );
+  
+  logic [1:0] b1_inv [4];
+  logic [1:0] b1_inv_buf [4];
+  logic [1:0] b0_inv [4];
+  logic [1:0] b0_inv_buf [4];
+  assign b1_inv[0] = t1            ^ aes_mul_gf2p2(b0, c_inv); 
+  assign b1_inv[1] = b1_inv_buf[0] ^ mul_b0_r_sq_buf;
+  assign b1_inv[2] = b1_inv_buf[1] ^ mul_q0_c_inv_buf;
+  assign b1_inv[3] = b1_inv_buf[2] ^ mul_q0_r_sq_buf;
+  assign b0_inv[0] = t0            ^ aes_mul_gf2p2(b1, c_inv); 
+  assign b0_inv[1] = b0_inv_buf[0] ^ mul_b1_r_sq_buf;
+  assign b0_inv[2] = b0_inv_buf[1] ^ mul_q1_c_inv_buf;
+  assign b0_inv[3] = b0_inv_buf[2] ^ mul_q1_r_sq_buf;
+  
+  for (genvar i = 0; i < 4; i++) begin : gen_a01_inv_buf
+    prim_buf #(
+      .Width ( 2 )
+    ) u_prim_buf_b1_inv_i (
+      .in_i  ( b1_inv[i]     ),
+      .out_o ( b1_inv_buf[i] )
+    );
+    prim_buf #(
+      .Width ( 2 )
+    ) u_prim_buf_b0_inv_i (
+      .in_i  ( b0_inv[i]     ),
+      .out_o ( b0_inv_buf[i] )
+    );
+  end
+  
+  assign b_inv = {b1_inv_buf[3], b0_inv_buf[3]};
+endmodule
+module aes_masked_inverse_gf2p8_noreuse (
+  input  logic [7:0] a,    
+  input  logic [7:0] m,    
+  input  logic [7:0] n,    
+  input  logic [9:0] prd,  
+  output logic [7:0] a_inv 
+);
+  import aes_pkg::*;
+  import aes_sbox_canright_pkg::*;
+  logic [3:0] a1, a0, m1, m0, q, b_inv, s1, s0, t;
+  logic [1:0] r;
+  assign a1 = a[7:4];
+  assign a0 = a[3:0];
+  assign m1 = m[7:4];
+  assign m0 = m[3:0];
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  assign r  = prd[1:0];
+  assign q  = prd[5:2];
+  assign t  = prd[9:6];
+  assign s1 = n[7:4];
+  assign s0 = n[3:0];
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  logic [3:0] ss_a1_a0, ss_m1_m0;
+  assign ss_a1_a0 = aes_square_scale_gf2p4_gf2p2(a1 ^ a0);
+  assign ss_m1_m0 = aes_square_scale_gf2p4_gf2p2(m1 ^ m0);
+  logic [3:0] mul_a1_a0, mul_a1_m0, mul_a0_m1, mul_m0_m1;
+  assign mul_a1_a0 = aes_mul_gf2p4(a1, a0);
+  assign mul_a1_m0 = aes_mul_gf2p4(a1, m0);
+  assign mul_a0_m1 = aes_mul_gf2p4(a0, m1);
+  assign mul_m0_m1 = aes_mul_gf2p4(m0, m1);
+  
+  
+  logic [3:0] mul_a1_a0_buf, mul_a1_m0_buf, mul_a0_m1_buf, mul_m0_m1_buf;
+  prim_buf #(
+    .Width ( 16 )
+  ) u_prim_buf_mul_am01 (
+    .in_i  ( {mul_a1_a0,     mul_a1_m0,     mul_a0_m1,     mul_m0_m1}     ),
+    .out_o ( {mul_a1_a0_buf, mul_a1_m0_buf, mul_a0_m1_buf, mul_m0_m1_buf} )
+  );
+  
+  logic [3:0] b [6];
+  logic [3:0] b_buf [6];
+  assign b[0] = q        ^ ss_a1_a0; 
+  assign b[1] = b_buf[0] ^ ss_m1_m0; 
+  assign b[2] = b_buf[1] ^ mul_a1_a0_buf;
+  assign b[3] = b_buf[2] ^ mul_a1_m0_buf;
+  assign b[4] = b_buf[3] ^ mul_a0_m1_buf;
+  assign b[5] = b_buf[4] ^ mul_m0_m1_buf;
+  
+  for (genvar i = 0; i < 6; i++) begin : gen_b_buf
+    prim_buf #(
+      .Width ( 4 )
+    ) u_prim_buf_b_i (
+      .in_i  ( b[i]     ),
+      .out_o ( b_buf[i] )
+    );
+  end
+  
+  
+  
+  
+  aes_masked_inverse_gf2p4_noreuse u_aes_masked_inverse_gf2p4 (
+    .b     ( b_buf[5] ),
+    .q     ( q        ),
+    .r     ( r        ),
+    .t     ( t        ),
+    .b_inv ( b_inv    )
+  );
+  
+  
+  
+  logic [3:0] b_inv_buf;
+  prim_buf #(
+    .Width ( 4 )
+  ) u_prim_buf_b_inv (
+    .in_i  ( b_inv     ),
+    .out_o ( b_inv_buf )
+  );
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  logic [3:0] mul_a0_b_inv, mul_a0_t, mul_m0_b_inv, mul_m0_t;
+  logic [3:0] mul_a1_b_inv, mul_a1_t, mul_m1_b_inv, mul_m1_t;
+  assign mul_a0_b_inv = aes_mul_gf2p4(a0, b_inv_buf);
+  assign mul_a0_t     = aes_mul_gf2p4(a0, t);
+  assign mul_m0_b_inv = aes_mul_gf2p4(m0, b_inv_buf);
+  assign mul_m0_t     = aes_mul_gf2p4(m0, t);
+  assign mul_a1_b_inv = aes_mul_gf2p4(a1, b_inv_buf);
+  assign mul_a1_t     = aes_mul_gf2p4(a1, t);
+  assign mul_m1_b_inv = aes_mul_gf2p4(m1, b_inv_buf);
+  assign mul_m1_t     = aes_mul_gf2p4(m1, t);
+  
+  
+  logic [3:0] mul_a0_b_inv_buf, mul_a0_t_buf, mul_m0_b_inv_buf, mul_m0_t_buf;
+  prim_buf #(
+    .Width ( 16 )
+  ) u_prim_buf_mul_am0 (
+    .in_i  ( {mul_a0_b_inv,     mul_a0_t,     mul_m0_b_inv,     mul_m0_t}     ),
+    .out_o ( {mul_a0_b_inv_buf, mul_a0_t_buf, mul_m0_b_inv_buf, mul_m0_t_buf} )
+  );
+  logic [3:0] mul_a1_b_inv_buf, mul_a1_t_buf, mul_m1_b_inv_buf, mul_m1_t_buf;
+  prim_buf #(
+    .Width ( 16 )
+  ) u_prim_buf_mul_am1 (
+    .in_i  ( {mul_a1_b_inv,     mul_a1_t,     mul_m1_b_inv,     mul_m1_t}     ),
+    .out_o ( {mul_a1_b_inv_buf, mul_a1_t_buf, mul_m1_b_inv_buf, mul_m1_t_buf} )
+  );
+  
+  logic [3:0] a1_inv [4];
+  logic [3:0] a1_inv_buf [4];
+  logic [3:0] a0_inv [4];
+  logic [3:0] a0_inv_buf [4];
+  assign a1_inv[0] = s1            ^ mul_a0_b_inv_buf;
+  assign a1_inv[1] = a1_inv_buf[0] ^ mul_a0_t_buf;
+  assign a1_inv[2] = a1_inv_buf[1] ^ mul_m0_b_inv_buf;
+  assign a1_inv[3] = a1_inv_buf[2] ^ mul_m0_t_buf;
+  assign a0_inv[0] = s0            ^ mul_a1_b_inv_buf;
+  assign a0_inv[1] = a0_inv_buf[0] ^ mul_a1_t_buf;
+  assign a0_inv[2] = a0_inv_buf[1] ^ mul_m1_b_inv_buf;
+  assign a0_inv[3] = a0_inv_buf[2] ^ mul_m1_t_buf;
+  
+  for (genvar i = 0; i < 4; i++) begin : gen_a01_inv_buf
+    prim_buf #(
+      .Width ( 4 )
+    ) u_prim_buf_a1_inv_i (
+      .in_i  ( a1_inv[i]     ),
+      .out_o ( a1_inv_buf[i] )
+    );
+    prim_buf #(
+      .Width ( 4 )
+    ) u_prim_buf_a0_inv_i (
+      .in_i  ( a0_inv[i]     ),
+      .out_o ( a0_inv_buf[i] )
+    );
+  end
+  
+  assign a_inv = {a1_inv_buf[3], a0_inv_buf[3]};
+endmodule
+module aes_sbox_canright_masked_noreuse (
+  input  aes_pkg::ciph_op_e op_i,
+  input  logic        [7:0] data_i, 
+  input  logic        [7:0] mask_i, 
+  input  logic       [17:0] prd_i,  
+                                    
+  output logic        [7:0] data_o, 
+  output logic        [7:0] mask_o  
+);
+  import aes_pkg::*;
+  import aes_sbox_canright_pkg::*;
+  
+  
+  
+  logic [7:0] in_data_basis_x, out_data_basis_x;
+  logic [7:0] in_mask_basis_x, out_mask_basis_x;
+  
+  assign in_data_basis_x = (op_i == CIPH_FWD) ? aes_mvm(data_i, A2X)         :
+                           (op_i == CIPH_INV) ? aes_mvm(data_i ^ 8'h63, S2X) :
+                                                aes_mvm(data_i, A2X);
+  
+  
+  assign mask_o = prd_i[7:0];
+  
+  logic [9:0] prd_masking;
+  assign prd_masking = prd_i[17:8];
+  
+  
+  assign in_mask_basis_x  = (op_i == CIPH_FWD) ? aes_mvm(mask_i, A2X) :
+                            (op_i == CIPH_INV) ? aes_mvm(mask_i, S2X) :
+                                                 aes_mvm(mask_i, A2X);
+  
+  assign out_mask_basis_x = (op_i == CIPH_INV) ? aes_mvm(mask_o, A2X) :
+                            (op_i == CIPH_FWD) ? aes_mvm(mask_o, S2X) :
+                                                 aes_mvm(mask_o, S2X);
+  
+  aes_masked_inverse_gf2p8_noreuse u_aes_masked_inverse_gf2p8 (
+    .a     ( in_data_basis_x  ), 
+    .m     ( in_mask_basis_x  ), 
+    .n     ( out_mask_basis_x ), 
+    .prd   ( prd_masking      ), 
+    .a_inv ( out_data_basis_x )  
+  );
+  
+  assign data_o = (op_i == CIPH_FWD) ? (aes_mvm(out_data_basis_x, X2S) ^ 8'h63) :
+                  (op_i == CIPH_INV) ? (aes_mvm(out_data_basis_x, X2A))         :
+                                       (aes_mvm(out_data_basis_x, X2S) ^ 8'h63);
+endmodule
+
+package aes_sbox_canright_pkg;
+  
+  
+  function automatic logic [1:0] aes_mul_gf2p2(logic [1:0] g, logic [1:0] d);
+    logic [1:0] f;
+    logic       a, b, c;
+    a    = g[1] & d[1];
+    b    = (^g) & (^d);
+    c    = g[0] & d[0];
+    f[1] = a ^ b;
+    f[0] = c ^ b;
+    return f;
+  endfunction
+  
+  
+  function automatic logic [1:0] aes_scale_omega2_gf2p2(logic [1:0] g);
+    logic [1:0] d;
+    d[1] = g[0];
+    d[0] = g[1] ^ g[0];
+    return d;
+  endfunction
+  
+  
+  function automatic logic [1:0] aes_scale_omega_gf2p2(logic [1:0] g);
+    logic [1:0] d;
+    d[1] = g[1] ^ g[0];
+    d[0] = g[1];
+    return d;
+  endfunction
+  
+  
+  function automatic logic [1:0] aes_square_gf2p2(logic [1:0] g);
+    logic [1:0] d;
+    d[1] = g[0];
+    d[0] = g[1];
+    return d;
+  endfunction
+  
+  
+  function automatic logic [3:0] aes_mul_gf2p4(logic [3:0] gamma, logic [3:0] delta);
+    logic [3:0] theta;
+    logic [1:0] a, b, c;
+    a          = aes_mul_gf2p2(gamma[3:2], delta[3:2]);
+    b          = aes_mul_gf2p2(gamma[3:2] ^ gamma[1:0], delta[3:2] ^ delta[1:0]);
+    c          = aes_mul_gf2p2(gamma[1:0], delta[1:0]);
+    theta[3:2] = a ^ aes_scale_omega2_gf2p2(b);
+    theta[1:0] = c ^ aes_scale_omega2_gf2p2(b);
+    return theta;
+  endfunction
+  
+  
+  function automatic logic [3:0] aes_square_scale_gf2p4_gf2p2(logic [3:0] gamma);
+    logic [3:0] delta;
+    logic [1:0] a, b;
+    a          = gamma[3:2] ^ gamma[1:0];
+    b          = aes_square_gf2p2(gamma[1:0]);
+    delta[3:2] = aes_square_gf2p2(a);
+    delta[1:0] = aes_scale_omega_gf2p2(b);
+    return delta;
+  endfunction
+  
+  
+  
+  
+  
+  
+  
+  parameter logic [7:0] A2X [8] = '{8'h98, 8'hf3, 8'hf2, 8'h48, 8'h09, 8'h81, 8'ha9, 8'hff};
+  parameter logic [7:0] X2A [8] = '{8'h64, 8'h78, 8'h6e, 8'h8c, 8'h68, 8'h29, 8'hde, 8'h60};
+  parameter logic [7:0] X2S [8] = '{8'h58, 8'h2d, 8'h9e, 8'h0b, 8'hdc, 8'h04, 8'h03, 8'h24};
+  parameter logic [7:0] S2X [8] = '{8'h8c, 8'h79, 8'h05, 8'heb, 8'h12, 8'h04, 8'h51, 8'h53};
+endpackage
+
+`ifndef PRIM_ASSERT_SV
+`define PRIM_ASSERT_SV
+`define ASSERT_DEFAULT_CLK clk_i
+`define ASSERT_DEFAULT_RST !rst_ni
+`define PRIM_STRINGIFY(__x) `"__x`"
+`define ASSERT_ERROR(__name)                                                             \
+`ifdef UVM                                                                               \
+  uvm_pkg::uvm_report_error("ASSERT FAILED", `PRIM_STRINGIFY(__name), uvm_pkg::UVM_NONE, \
+                            `__FILE__, `__LINE__, "", 1);                                \
+`else                                                                                    \
+  $error("%0t: (%0s:%0d) [%m] [ASSERT FAILED] %0s", $time, `__FILE__, `__LINE__,         \
+         `PRIM_STRINGIFY(__name));                                                       \
+`endif
+`define ASSERT_STATIC_LINT_ERROR(__name, __prop)     \
+  localparam int __name = (__prop) ? 1 : 2;          \
+  always_comb begin                                  \
+    logic unused_assert_static_lint_error;           \
+    unused_assert_static_lint_error = __name'(1'b1); \
+  end
+`define ASSERT_STATIC_IN_PACKAGE(__name, __prop)              \
+  function automatic bit assert_static_in_package_``__name(); \
+    bit unused_bit [((__prop) ? 1 : -1)];                     \
+    unused_bit = '{default: 1'b0};                            \
+    return unused_bit[0];                                     \
+  endfunction
+`ifdef VERILATOR
+ `include "prim_assert_dummy_macros.svh"`elsif SYNTHESIS
+ `include "prim_assert_dummy_macros.svh"`elsif YOSYS
+ `include "prim_assert_yosys_macros.svh"
+ `define INC_ASSERT`else
+ 
+`define ASSERT_I(__name, __prop) \
+  __name: assert (__prop)        \
+    else begin                   \
+      `ASSERT_ERROR(__name)      \
+    end
+`define ASSERT_INIT(__name, __prop)                                                  \
+`ifdef FPV_ON                                                                        \
+  if (!(__prop)) $fatal(2, "Fatal static assertion [%s]: (%s) is not true.",         \
+                        (__name), (__prop));                                         \
+`else                                                                                \
+  initial begin                                                                      \
+    __name: assert (__prop)                                                          \
+      else begin                                                                     \
+        `ASSERT_ERROR(__name)                                                        \
+      end                                                                            \
+  end                                                                                \
+`endif
+`define ASSERT_INIT_NET(__name, __prop)                                                   \
+  initial begin                                                                      \
+    
+    
+    
+    #1ps;                                                                            \
+    __name: assert (__prop)                                                          \
+      else begin                                                                     \
+        `ASSERT_ERROR(__name)                                                        \
+      end                                                                            \
+  end                                                                                \
+`define ASSERT_FINAL(__name, __prop)                                         \
+`ifndef FPV_ON                                                               \
+  final begin                                                                \
+    __name: assert (__prop || $test$plusargs("disable_assert_final_checks")) \
+      else begin                                                             \
+        `ASSERT_ERROR(__name)                                                \
+      end                                                                    \
+  end                                                                        \
+`endif
+`define ASSERT_AT_RESET(__name, __prop, __rst = `ASSERT_DEFAULT_RST)          \
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+`ifndef FPV_ON                                                                \
+  __name: assert property (@(posedge __rst) $isunknown(__rst) || (__prop))    \
+`else                                                                         \
+  __name: assert property (@(posedge __rst) (__prop))                         \
+`endif                                                                        \
+    else begin                                                                \
+      `ASSERT_ERROR(__name)                                                   \
+    end
+`define ASSERT_AT_RESET_AND_FINAL(__name, __prop, __rst = `ASSERT_DEFAULT_RST) \
+    `ASSERT_AT_RESET(AtReset_``__name``, __prop, __rst)                        \
+    `ASSERT_FINAL(Final_``__name``, __prop)
+`define ASSERT(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: assert property (@(posedge __clk) disable iff ((__rst) !== '0) (__prop))       \
+    else begin                                                                           \
+      `ASSERT_ERROR(__name)                                                              \
+    end
+`define ASSERT_NEVER(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: assert property (@(posedge __clk) disable iff ((__rst) !== '0) not (__prop))         \
+    else begin                                                                                 \
+      `ASSERT_ERROR(__name)                                                                    \
+    end
+`define ASSERT_KNOWN(__name, __sig, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifndef FPV_ON                                                                                \
+  `ASSERT(__name, !$isunknown(__sig), __clk, __rst)                                           \
+`endif
+`define COVER(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: cover property (@(posedge __clk) disable iff ((__rst) !== '0) (__prop));
+`define ASSUME(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: assume property (@(posedge __clk) disable iff ((__rst) !== '0) (__prop))       \
+    else begin                                                                           \
+      `ASSERT_ERROR(__name)                                                              \
+    end
+`define ASSUME_I(__name, __prop) \
+  __name: assume (__prop)        \
+    else begin                   \
+      `ASSERT_ERROR(__name)      \
+    end
+ `define INC_ASSERT
+`endif
+`define ASSERT_PULSE(__name, __sig, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  `ASSERT(__name, $rose(__sig) |=> !(__sig), __clk, __rst)
+`define ASSERT_IF(__name, __prop, __enable, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  `ASSERT(__name, (__enable) |-> (__prop), __clk, __rst)
+`define ASSERT_KNOWN_IF(__name, __sig, __enable, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifndef FPV_ON                                                                                             \
+  `ASSERT_KNOWN(__name``KnownEnable, __enable, __clk, __rst)                                               \
+  `ASSERT_IF(__name, !$isunknown(__sig), __enable, __clk, __rst)                                           \
+`endif
+`define ASSUME_FPV(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifdef FPV_ON                                                                                \
+   `ASSUME(__name, __prop, __clk, __rst)                                                     \
+`endif
+`define ASSUME_I_FPV(__name, __prop) \
+`ifdef FPV_ON                        \
+   `ASSUME_I(__name, __prop)         \
+`endif
+`define COVER_FPV(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifdef FPV_ON                                                                               \
+   `COVER(__name, __prop, __clk, __rst)                                                     \
+`endif
+`define ASSERT_FPV_LINEAR_FSM(__name, __state, __type, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  `ifdef INC_ASSERT                                                                                              \
+     bit __name``_cond;                                                                                          \
+     always_ff @(posedge __clk or posedge __rst) begin                                                           \
+       if (__rst) begin                                                                                          \
+         __name``_cond <= 0;                                                                                     \
+       end else begin                                                                                            \
+         __name``_cond <= 1;                                                                                     \
+       end                                                                                                       \
+     end                                                                                                         \
+     property __name``_p;                                                                                        \
+       __type initial_state;                                                                                     \
+       (!$stable(__state) & __name``_cond, initial_state = $past(__state)) |->                                   \
+           (__state != initial_state) until !(__name``_cond);                                                    \
+     endproperty                                                                                                 \
+   `ASSERT(__name, __name``_p, __clk, 0)                                                                         \
+  `endif
+`ifndef PRIM_ASSERT_SEC_CM_SVH
+`define PRIM_ASSERT_SEC_CM_SVH
+`define _SEC_CM_ALERT_MAX_CYC 30
+`define ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, ERR_NAME_, CLK_, RST_) \
+  `ASSERT(FpvSecCm``NAME_``,                                                                    \
+          $rose(HIER_.ERR_NAME_) && !(GATE_) |-> ##[0:MAX_CYCLES_] (ERR_),                      \
+          CLK_, RST_)                                                                           \
+  `ifdef INC_ASSERT                                                                             \
+    assign HIER_.unused_assert_connected = 1'b1;                                                \
+  `endif
+`define ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, ERR_NAME_)    \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, (ALERT_.alert_p), GATE_, MAX_CYCLES_, ERR_NAME_, \
+                            `ASSERT_DEFAULT_CLK, `ASSERT_DEFAULT_RST)                      \
+  `ASSUME_FPV(``NAME_``TriggerAfterAlertInit_S,                                            \
+              $stable(rst_ni) == 0 |-> HIER_.ERR_NAME_ == 0 [*10])
+`define ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_IN_, GATE_, MAX_CYCLES_, ERR_NAME_) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ALERT_IN_, GATE_, MAX_CYCLES_, ERR_NAME_,           \
+                            `ASSERT_DEFAULT_CLK, `ASSERT_DEFAULT_RST)
+`define ASSERT_PRIM_COUNT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_DOUBLE_LFSR_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_FSM_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, unused_err_o)
+`define ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_REG_WE_ONEHOT_ERROR_TRIGGER_ALERT(NAME_, REG_TOP_HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT(NAME_, \
+    REG_TOP_HIER_.u_prim_reg_we_check.u_prim_onehot_check, ALERT_, GATE_, MAX_CYCLES_)
+`define ASSERT_PRIM_FIFO_SYNC_SINGLETON_ERROR_TRIGGER_ALERT(NAME, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_COUNT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_DOUBLE_LFSR_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_FSM_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, unused_err_o)
+`define ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_REG_WE_ONEHOT_ERROR_TRIGGER_ALERT_IN(NAME_, REG_TOP_HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT_IN(NAME_, \
+    REG_TOP_HIER_.u_prim_reg_we_check.u_prim_onehot_check, ALERT_, GATE_, MAX_CYCLES_)
+`define ASSERT_PRIM_FIFO_SYNC_SINGLETON_ERROR_TRIGGER_ALERT_IN(NAME, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_FSM_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = 2, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, unused_err_o, CLK_, RST_)
+`define ASSERT_PRIM_COUNT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = 2, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, err_o, CLK_, RST_)
+`define ASSERT_PRIM_DOUBLE_LFSR_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = 2, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, err_o, CLK_, RST_)
+`define ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, err_o, CLK_, RST_)
+`define ASSERT_PRIM_REG_WE_ONEHOT_ERROR_TRIGGER_ERR(NAME_, REG_TOP_HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ERR(NAME_, \
+    REG_TOP_HIER_.u_prim_reg_we_check.u_prim_onehot_check, ERR_, GATE_, MAX_CYCLES_, CLK_, RST_)
+`endif 
+`ifndef PRIM_FLOP_MACROS_SV
+`define PRIM_FLOP_MACROS_SV
+`define PRIM_FLOP_CLK clk_i
+`define PRIM_FLOP_RST rst_ni
+`define PRIM_FLOP_RESVAL '0
+`define PRIM_FLOP_A(__d, __q, __resval = `PRIM_FLOP_RESVAL, __clk = `PRIM_FLOP_CLK, __rst_n = `PRIM_FLOP_RST) \
+  always_ff @(posedge __clk or negedge __rst_n) begin \
+    if (!__rst_n) begin                               \
+      __q <= __resval;                                \
+    end else begin                                    \
+      __q <= __d;                                     \
+    end                                               \
+  end
+`define PRIM_FLOP_SPARSE_FSM(__name, __d, __q, __type, __resval = `PRIM_FLOP_RESVAL, __clk = `PRIM_FLOP_CLK, __rst_n = `PRIM_FLOP_RST, __alert_trigger_sva_en = 1) \
+  `ifdef SIMULATION                                   \
+    prim_sparse_fsm_flop #(                           \
+      .StateEnumT(__type),                            \
+      .Width($bits(__type)),                          \
+      .ResetValue($bits(__type)'(__resval)),          \
+      .EnableAlertTriggerSVA(__alert_trigger_sva_en), \
+      .CustomForceName(`PRIM_STRINGIFY(__q))          \
+    ) __name (                                        \
+      .clk_i   ( __clk   ),                           \
+      .rst_ni  ( __rst_n ),                           \
+      .state_i ( __d     ),                           \
+      .state_o (         )                            \
+    );                                                \
+    `PRIM_FLOP_A(__d, __q, __resval, __clk, __rst_n)  \
+    `ASSERT(``__name``_A, __q === ``__name``.state_o) \
+  `else                                               \
+    prim_sparse_fsm_flop #(                           \
+      .StateEnumT(__type),                            \
+      .Width($bits(__type)),                          \
+      .ResetValue($bits(__type)'(__resval)),          \
+      .EnableAlertTriggerSVA(__alert_trigger_sva_en)  \
+    ) __name (                                        \
+      .clk_i   ( __clk   ),                           \
+      .rst_ni  ( __rst_n ),                           \
+      .state_i ( __d     ),                           \
+      .state_o ( __q     )                            \
+    );                                                \
+  `endif
+`endif 
+`endif 
+typedef struct packed {
+  logic [7:0] prd_1;
+  logic [3:0] prd_2;
+  logic [7:0] prd_3;
+  logic [7:0] prd_4;
+} aes_sbox_dom_prd_in_t;
+typedef struct packed {
+  logic [3:0] prd_1;
+  logic [7:0] prd_2;
+  logic [7:0] prd_3;
+} aes_sbox_dom_prd_out_t;
+module aes_dom_indep_mul_gf2pn #(
+  parameter int unsigned NPower   = 4,
+  parameter bit          Pipeline = 1'b0
+) (
+  input  logic              clk_i,
+  input  logic              rst_ni,
+  input  logic              we_i,
+  input  logic [NPower-1:0] a_x,    
+  input  logic [NPower-1:0] a_y,    
+  input  logic [NPower-1:0] b_x,    
+  input  logic [NPower-1:0] b_y,    
+  input  logic [NPower-1:0] z_0,    
+  output logic [NPower-1:0] a_q,    
+  output logic [NPower-1:0] b_q     
+);
+  import aes_sbox_canright_pkg::*;
+  
+  
+  
+  
+  logic [NPower-1:0] mul_ax_ay_d, mul_bx_by_d;
+  if (NPower == 4) begin : gen_inner_mul_gf2p4
+    assign mul_ax_ay_d = aes_mul_gf2p4(a_x, a_y);
+    assign mul_bx_by_d = aes_mul_gf2p4(b_x, b_y);
+  end else begin : gen_inner_mul_gf2p2
+    assign mul_ax_ay_d = aes_mul_gf2p2(a_x, a_y);
+    assign mul_bx_by_d = aes_mul_gf2p2(b_x, b_y);
+  end
+  
+  logic [NPower-1:0] mul_ax_by, mul_ay_bx;
+  if (NPower == 4) begin : gen_cross_mul_gf2p4
+    assign mul_ax_by = aes_mul_gf2p4(a_x, b_y);
+    assign mul_ay_bx = aes_mul_gf2p4(a_y, b_x);
+  end else begin : gen_cross_mul_gf2p2
+    assign mul_ax_by = aes_mul_gf2p2(a_x, b_y);
+    assign mul_ay_bx = aes_mul_gf2p2(a_y, b_x);
+  end
+  
+  
+  
+  
+  logic [NPower-1:0] aq_z0_d, bq_z0_d;
+  logic [NPower-1:0] aq_z0_q, bq_z0_q;
+  assign aq_z0_d = z_0 ^ mul_ax_by;
+  assign bq_z0_d = z_0 ^ mul_ay_bx;
+  
+  prim_flop_en #(
+    .Width      ( 2*NPower ),
+    .ResetValue ( '0       )
+  ) u_prim_flop_abq_z0 (
+    .clk_i  ( clk_i              ),
+    .rst_ni ( rst_ni             ),
+    .en_i   ( we_i               ),
+    .d_i    ( {aq_z0_d, bq_z0_d} ),
+    .q_o    ( {aq_z0_q, bq_z0_q} )
+  );
+  
+  
+  
+  logic [NPower-1:0] mul_ax_ay, mul_bx_by;
+  if (Pipeline == 1'b1) begin : gen_pipeline
+    
+    
+    
+    logic [NPower-1:0] mul_ax_ay_q, mul_bx_by_q;
+    prim_flop_en #(
+      .Width      ( 2*NPower ),
+      .ResetValue ( '0       )
+    ) u_prim_flop_mul_abx_aby (
+      .clk_i  ( clk_i                      ),
+      .rst_ni ( rst_ni                     ),
+      .en_i   ( we_i                       ),
+      .d_i    ( {mul_ax_ay_d, mul_bx_by_d} ),
+      .q_o    ( {mul_ax_ay_q, mul_bx_by_q} )
+    );
+    assign mul_ax_ay = mul_ax_ay_q;
+    assign mul_bx_by = mul_bx_by_q;
+  end else begin : gen_no_pipeline
+    
+    
+    
+    
+    
+    logic [NPower-1:0] mul_ax_ay_buf, mul_bx_by_buf;
+    prim_buf #(
+      .Width  ( 2*NPower )
+    ) u_prim_buf_mul_abx_aby (
+      .in_i  ( {mul_ax_ay_d,   mul_bx_by_d}   ),
+      .out_o ( {mul_ax_ay_buf, mul_bx_by_buf} )
+    );
+    assign mul_ax_ay = mul_ax_ay_buf;
+    assign mul_bx_by = mul_bx_by_buf;
+  end
+  
+  
+  
+  assign a_q = mul_ax_ay ^ aq_z0_q;
+  assign b_q = mul_bx_by ^ bq_z0_q;
+  
+  `ASSERT_INIT(AesDomIndepMulPower, NPower == 4 || NPower == 2)
+endmodule
+module aes_dom_dep_mul_gf2pn_unopt #(
+  parameter int unsigned NPower   = 4,
+  parameter bit          Pipeline = 1'b0
+) (
+  input  logic              clk_i,
+  input  logic              rst_ni,
+  input  logic              we_i,
+  input  logic [NPower-1:0] a_x,    
+  input  logic [NPower-1:0] a_y,    
+  input  logic [NPower-1:0] b_x,    
+  input  logic [NPower-1:0] b_y,    
+  input  logic [NPower-1:0] a_z,    
+  input  logic [NPower-1:0] b_z,    
+  input  logic [NPower-1:0] z_0,    
+  output logic [NPower-1:0] a_q,    
+  output logic [NPower-1:0] b_q     
+);
+  import aes_sbox_canright_pkg::*;
+  
+  
+  
+  
+  logic [NPower-1:0] a_yz_d, b_yz_d;
+  logic [NPower-1:0] a_yz_q, b_yz_q;
+  assign a_yz_d = a_y ^ a_z;
+  assign b_yz_d = b_y ^ b_z;
+  
+  prim_flop_en #(
+    .Width      ( 2*NPower ),
+    .ResetValue ( '0       )
+  ) u_prim_flop_ab_yz (
+    .clk_i  ( clk_i            ),
+    .rst_ni ( rst_ni           ),
+    .en_i   ( we_i             ),
+    .d_i    ( {a_yz_d, b_yz_d} ),
+    .q_o    ( {a_yz_q, b_yz_q} )
+  );
+  
+  
+  
+  logic [NPower-1:0] a_mul_x_z, b_mul_x_z;
+  aes_dom_indep_mul_gf2pn #(
+    .NPower   ( NPower   ),
+    .Pipeline ( Pipeline )
+  ) u_aes_dom_indep_mul_gf2pn (
+    .clk_i  ( clk_i     ),
+    .rst_ni ( rst_ni    ),
+    .we_i   ( we_i      ),
+    .a_x    ( a_x       ), 
+    .a_y    ( a_z       ), 
+    .b_x    ( b_x       ), 
+    .b_y    ( b_z       ), 
+    .z_0    ( z_0       ), 
+    .a_q    ( a_mul_x_z ), 
+    .b_q    ( b_mul_x_z )  
+  );
+  
+  
+  
+  logic [NPower-1:0] a_x_calc, b_x_calc;
+  if (Pipeline == 1'b1) begin : gen_pipeline
+    
+    
+    
+    logic [NPower-1:0] a_x_q, b_x_q;
+    prim_flop_en #(
+      .Width      ( 2*NPower ),
+      .ResetValue ( '0       )
+    ) u_prim_flop_ab_x (
+      .clk_i  ( clk_i          ),
+      .rst_ni ( rst_ni         ),
+      .en_i   ( we_i           ),
+      .d_i    ( {a_x,   b_x}   ),
+      .q_o    ( {a_x_q, b_x_q} )
+    );
+    assign a_x_calc = a_x_q;
+    assign b_x_calc = b_x_q;
+  end else begin : gen_no_pipeline
+    
+    
+    
+    
+    assign a_x_calc = a_x;
+    assign b_x_calc = b_x;
+  end
+  
+  
+  
+  
+  logic [NPower-1:0] b;
+  assign b = a_yz_q ^ b_yz_q;
+  logic [NPower-1:0] a_mul_ax_b, b_mul_bx_b;
+  if (NPower == 4) begin : gen_mul_gf2p4
+    assign a_mul_ax_b = aes_mul_gf2p4(a_x_calc, b);
+    assign b_mul_bx_b = aes_mul_gf2p4(b_x_calc, b);
+  end else begin : gen_mul_gf2p2
+    assign a_mul_ax_b = aes_mul_gf2p2(a_x_calc, b);
+    assign b_mul_bx_b = aes_mul_gf2p2(b_x_calc, b);
+  end
+  
+  
+  
+  assign a_q = a_mul_x_z ^ a_mul_ax_b;
+  assign b_q = b_mul_x_z ^ b_mul_bx_b;
+  
+  `ASSERT_INIT(AesDomDepMulUnoptPower, NPower == 4 || NPower == 2)
+endmodule
+module aes_dom_dep_mul_gf2pn #(
+  parameter int unsigned NPower      = 4,
+  parameter bit          Pipeline    = 1'b0,
+  parameter bit          PreDomIndep = 1'b0 
+                                            
+                                            
+                                            
+                                            
+                                            
+) (
+  input  logic                clk_i,
+  input  logic                rst_ni,
+  input  logic                we_i,
+  input  logic   [NPower-1:0] a_x,    
+  input  logic   [NPower-1:0] a_y,    
+  input  logic   [NPower-1:0] b_x,    
+  input  logic   [NPower-1:0] b_y,    
+  input  logic   [NPower-1:0] a_x_q,  
+  input  logic   [NPower-1:0] a_y_q,  
+  input  logic   [NPower-1:0] b_x_q,  
+  input  logic   [NPower-1:0] b_y_q,  
+  input  logic   [NPower-1:0] z_0,    
+  input  logic   [NPower-1:0] z_1,    
+  output logic   [NPower-1:0] a_q,    
+  output logic   [NPower-1:0] b_q,    
+  output logic [2*NPower-1:0] prd_o   
+);
+  import aes_sbox_canright_pkg::*;
+  
+  
+  
+  
+  logic [NPower-1:0] a_yz0_d, b_yz0_d;
+  logic [NPower-1:0] a_yz0_q, b_yz0_q;
+  assign a_yz0_d = a_y ^ z_0;
+  assign b_yz0_d = b_y ^ z_0;
+  
+  prim_flop_en #(
+    .Width      ( 2*NPower ),
+    .ResetValue ( '0       )
+  ) u_prim_flop_ab_yz0 (
+    .clk_i  ( clk_i              ),
+    .rst_ni ( rst_ni             ),
+    .en_i   ( we_i               ),
+    .d_i    ( {a_yz0_d, b_yz0_d} ),
+    .q_o    ( {a_yz0_q, b_yz0_q} )
+  );
+  
+  
+  
+  
+  
+  
+  
+  
+  logic [NPower-1:0] mul_ax_z0, mul_bx_z0;
+  if (NPower == 4) begin : gen_corr_mul_gf2p4
+    assign mul_ax_z0 = aes_mul_gf2p4(a_x, z_0);
+    assign mul_bx_z0 = aes_mul_gf2p4(b_x, z_0);
+  end else begin : gen_corr_mul_gf2p2
+    assign mul_ax_z0 = aes_mul_gf2p2(a_x, z_0);
+    assign mul_bx_z0 = aes_mul_gf2p2(b_x, z_0);
+  end
+  
+  logic [NPower-1:0] mul_ax_z0_buf, mul_bx_z0_buf;
+  prim_buf #(
+    .Width ( 2*NPower )
+  ) u_prim_buf_mul_abx_z0 (
+    .in_i  ( {mul_ax_z0,     mul_bx_z0}     ),
+    .out_o ( {mul_ax_z0_buf, mul_bx_z0_buf} )
+  );
+  
+  logic [NPower-1:0] axz0_z1_d, bxz0_z1_d;
+  logic [NPower-1:0] axz0_z1_q, bxz0_z1_q;
+  assign axz0_z1_d = mul_ax_z0_buf ^ z_1;
+  assign bxz0_z1_d = mul_bx_z0_buf ^ z_1;
+  
+  prim_flop_en #(
+    .Width      ( 2*NPower ),
+    .ResetValue ( '0       )
+  ) u_prim_flop_abxz0_z1 (
+    .clk_i  ( clk_i                  ),
+    .rst_ni ( rst_ni                 ),
+    .en_i   ( we_i                   ),
+    .d_i    ( {axz0_z1_d, bxz0_z1_d} ),
+    .q_o    ( {axz0_z1_q, bxz0_z1_q} )
+  );
+  
+  
+  
+  
+  
+  
+  assign prd_o = {b_yz0_q, bxz0_z1_q};
+  
+  
+  
+  logic [NPower-1:0] a_x_calc, b_x_calc, a_y_calc, b_y_calc;
+  if (Pipeline == 1'b1 && PreDomIndep != 1'b1) begin : gen_pipeline_use
+    
+    
+    
+    
+    
+    assign a_x_calc = a_x_q;
+    assign b_x_calc = b_x_q;
+    assign a_y_calc = a_y_q;
+    assign b_y_calc = b_y_q;
+  end else begin : gen_no_pipeline_use
+    
+    
+    
+    
+    assign a_x_calc = a_x;
+    assign b_x_calc = b_x;
+    assign a_y_calc = a_y;
+    assign b_y_calc = b_y;
+    
+    if (PreDomIndep != 1'b1) begin : gen_ab_x_q
+      logic [NPower-1:0] unused_a_x_q, unused_b_x_q;
+      assign unused_a_x_q = a_x_q;
+      assign unused_b_x_q = b_x_q;
+    end
+    logic [NPower-1:0] unused_a_y_q, unused_b_y_q;
+    assign unused_a_y_q = a_y_q;
+    assign unused_b_y_q = b_y_q;
+  end
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  if (PreDomIndep == 1'b1) begin : gen_pre_dom_indep
+    
+    
+    
+    
+    
+    logic [NPower-1:0] mul_ax_ay_d, mul_bx_by_d;
+    logic [NPower-1:0] mul_ax_ay_q, mul_bx_by_q;
+    if (NPower == 4) begin : gen_inner_mul_gf2p4
+      assign mul_ax_ay_d = aes_mul_gf2p4(a_x_calc, a_y_calc);
+      assign mul_bx_by_d = aes_mul_gf2p4(b_x_calc, b_y_calc);
+    end else begin : gen_inner_mul_gf2p2
+      assign mul_ax_ay_d = aes_mul_gf2p2(a_x_calc, a_y_calc);
+      assign mul_bx_by_d = aes_mul_gf2p2(b_x_calc, b_y_calc);
+    end
+    
+    prim_flop_en #(
+      .Width      ( 2*NPower ),
+      .ResetValue ( '0       )
+    ) u_prim_flop_mul_abx_aby (
+      .clk_i  ( clk_i                      ),
+      .rst_ni ( rst_ni                     ),
+      .en_i   ( we_i                       ),
+      .d_i    ( {mul_ax_ay_d, mul_bx_by_d} ),
+      .q_o    ( {mul_ax_ay_q, mul_bx_by_q} )
+    );
+    
+    
+    logic [NPower-1:0] mul_ax_byz0, mul_bx_ayz0;
+    if (NPower == 4) begin : gen_cross_mul_gf2p4
+      assign mul_ax_byz0 = aes_mul_gf2p4(a_x_q, b_yz0_q);
+      assign mul_bx_ayz0 = aes_mul_gf2p4(b_x_q, a_yz0_q);
+    end else begin : gen_cross_mul_gf2p2
+      assign mul_ax_byz0 = aes_mul_gf2p2(a_x_q, b_yz0_q);
+      assign mul_bx_ayz0 = aes_mul_gf2p2(b_x_q, a_yz0_q);
+    end
+    
+    logic [NPower-1:0] mul_ax_byz0_buf, mul_bx_ayz0_buf;
+    prim_buf #(
+      .Width ( 2*NPower )
+    ) u_prim_buf_mul_abx_bayz0 (
+      .in_i  ( {mul_ax_byz0,     mul_bx_ayz0}     ),
+      .out_o ( {mul_ax_byz0_buf, mul_bx_ayz0_buf} )
+    );
+    
+    assign a_q = axz0_z1_q ^ mul_ax_ay_q ^ mul_ax_byz0_buf;
+    assign b_q = bxz0_z1_q ^ mul_bx_by_q ^ mul_bx_ayz0_buf;
+  end else begin : gen_not_pre_dom_indep
+    
+    
+    
+    
+    logic [NPower-1:0] a_b, b_b;
+    assign a_b = a_y_calc ^ b_yz0_q;
+    assign b_b = b_y_calc ^ a_yz0_q;
+    
+    logic [NPower-1:0] a_b_buf, b_b_buf;
+    prim_buf #(
+      .Width ( 2*NPower )
+    ) u_prim_buf_ab_b (
+      .in_i  ( {a_b,     b_b}     ),
+      .out_o ( {a_b_buf, b_b_buf} )
+    );
+    
+    logic [NPower-1:0] a_mul_ax_b, b_mul_bx_b;
+    if (NPower == 4) begin : gen_mul_gf2p4
+      assign a_mul_ax_b = aes_mul_gf2p4(a_x_calc, a_b_buf);
+      assign b_mul_bx_b = aes_mul_gf2p4(b_x_calc, b_b_buf);
+    end else begin : gen_mul_gf2p2
+      assign a_mul_ax_b = aes_mul_gf2p2(a_x_calc, a_b_buf);
+      assign b_mul_bx_b = aes_mul_gf2p2(b_x_calc, b_b_buf);
+    end
+    
+    logic [NPower-1:0] a_mul_ax_b_buf, b_mul_bx_b_buf;
+    prim_buf #(
+      .Width ( 2*NPower )
+    ) u_prim_buf_ab_mul_abx_b (
+      .in_i  ( {a_mul_ax_b,     b_mul_bx_b}     ),
+      .out_o ( {a_mul_ax_b_buf, b_mul_bx_b_buf} )
+    );
+    
+    assign a_q = axz0_z1_q ^ a_mul_ax_b_buf;
+    assign b_q = bxz0_z1_q ^ b_mul_bx_b_buf;
+  end
+  
+  `ASSERT_INIT(AesDomDepMulPower, NPower == 4 || NPower == 2)
+endmodule
+module aes_dom_inverse_gf2p4 #(
+  parameter bit PipelineMul = 1'b1
+) (
+  input  logic        clk_i,
+  input  logic        rst_ni,
+  input  logic  [1:0] we_i,
+  input  logic  [3:0] a_gamma,
+  input  logic  [3:0] b_gamma,
+  input  logic  [3:0] prd_2_i,
+  input  logic  [7:0] prd_3_i,
+  output logic  [3:0] a_gamma_inv,
+  output logic  [3:0] b_gamma_inv,
+  output logic  [7:0] prd_2_o,
+  output logic  [7:0] prd_3_o
+);
+  import aes_sbox_canright_pkg::*;
+  
+  
+  
+  
+  logic [1:0] a_gamma1, a_gamma0, b_gamma1, b_gamma0, a_gamma1_gamma0, b_gamma1_gamma0;
+  assign a_gamma1 = a_gamma[3:2];
+  assign a_gamma0 = a_gamma[1:0];
+  assign b_gamma1 = b_gamma[3:2];
+  assign b_gamma0 = b_gamma[1:0];
+  logic [1:0] a_gamma_ss_d, b_gamma_ss_d;
+  logic [1:0] a_gamma_ss_q, b_gamma_ss_q;
+  assign a_gamma_ss_d = aes_scale_omega2_gf2p2(aes_square_gf2p2(a_gamma1 ^ a_gamma0));
+  assign b_gamma_ss_d = aes_scale_omega2_gf2p2(aes_square_gf2p2(b_gamma1 ^ b_gamma0));
+  prim_flop_en #(
+    .Width      ( 4  ),
+    .ResetValue ( '0 )
+  ) u_prim_flop_ab_gamma_ss (
+    .clk_i  ( clk_i                        ),
+    .rst_ni ( rst_ni                       ),
+    .en_i   ( we_i[0]                      ),
+    .d_i    ( {a_gamma_ss_d, b_gamma_ss_d} ),
+    .q_o    ( {a_gamma_ss_q, b_gamma_ss_q} )
+  );
+  logic [1:0] a_gamma1_q, a_gamma0_q, b_gamma1_q, b_gamma0_q;
+  prim_flop_en #(
+    .Width      ( 8  ),
+    .ResetValue ( '0 )
+  ) u_prim_flop_ab_gamma10 (
+    .clk_i  ( clk_i                                            ),
+    .rst_ni ( rst_ni                                           ),
+    .en_i   ( we_i[0]                                          ),
+    .d_i    ( {a_gamma1,   a_gamma0,   b_gamma1,   b_gamma0}   ),
+    .q_o    ( {a_gamma1_q, a_gamma0_q, b_gamma1_q, b_gamma0_q} )
+  );
+  logic [3:0] b_gamma10_prd2;
+  aes_dom_dep_mul_gf2pn #(
+    .NPower      ( 2           ),
+    .Pipeline    ( PipelineMul ),
+    .PreDomIndep ( 1'b0        )
+  ) u_aes_dom_mul_gamma1_gamma0 (
+    .clk_i  ( clk_i           ),
+    .rst_ni ( rst_ni          ),
+    .we_i   ( we_i[0]         ),
+    .a_x    ( a_gamma1        ), 
+    .a_y    ( a_gamma0        ), 
+    .b_x    ( b_gamma1        ), 
+    .b_y    ( b_gamma0        ), 
+    .a_x_q  ( a_gamma1_q      ), 
+    .a_y_q  ( a_gamma0_q      ), 
+    .b_x_q  ( b_gamma1_q      ), 
+    .b_y_q  ( b_gamma0_q      ), 
+    .z_0    ( prd_2_i[1:0]    ), 
+    .z_1    ( prd_2_i[3:2]    ), 
+    .a_q    ( a_gamma1_gamma0 ), 
+    .b_q    ( b_gamma1_gamma0 ), 
+    .prd_o  ( b_gamma10_prd2  )  
+  );
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  assign prd_2_o = {b_gamma1_q, b_gamma10_prd2[3:2], b_gamma0_q, b_gamma10_prd2[1:0]};
+  
+  
+  
+  
+  logic [1:0] a_omega, b_omega;
+  assign a_omega = aes_square_gf2p2(a_gamma1_gamma0 ^ a_gamma_ss_q);
+  assign b_omega = aes_square_gf2p2(b_gamma1_gamma0 ^ b_gamma_ss_q);
+  
+  logic [1:0] a_omega_buf, b_omega_buf;
+  prim_buf #(
+    .Width ( 4 )
+  ) u_prim_buf_ab_omega (
+    .in_i  ( {a_omega,     b_omega}     ),
+    .out_o ( {a_omega_buf, b_omega_buf} )
+  );
+  
+  logic [1:0] a_gamma1_qq, a_gamma0_qq, b_gamma1_qq, b_gamma0_qq, a_omega_buf_q, b_omega_buf_q;
+  if (PipelineMul == 1'b1) begin: gen_prim_flop_omega_gamma10
+    
+    
+    prim_flop_en #(
+      .Width      ( 8  ),
+      .ResetValue ( '0 )
+    ) u_prim_flop_ab_gamma10_q (
+      .clk_i  ( clk_i                                                ),
+      .rst_ni ( rst_ni                                               ),
+      .en_i   ( we_i[1]                                              ),
+      .d_i    ( {a_gamma1_q,  a_gamma0_q,  b_gamma1_q,  b_gamma0_q}  ),
+      .q_o    ( {a_gamma1_qq, a_gamma0_qq, b_gamma1_qq, b_gamma0_qq} )
+    );
+    
+    prim_flop_en #(
+      .Width      ( 4  ),
+      .ResetValue ( '0 )
+    ) u_prim_flop_ab_omega_buf (
+      .clk_i  ( clk_i                          ),
+      .rst_ni ( rst_ni                         ),
+      .en_i   ( we_i[1]                        ),
+      .d_i    ( {a_omega_buf,   b_omega_buf}   ),
+      .q_o    ( {a_omega_buf_q, b_omega_buf_q} )
+    );
+  end else begin : gen_no_prim_flop_ab_y10
+    
+    
+    
+    assign a_gamma1_qq = '0;
+    assign a_gamma0_qq = '0;
+    assign b_gamma1_qq = '0;
+    assign b_gamma0_qq = '0;
+    assign a_omega_buf_q = '0;
+    assign b_omega_buf_q = '0;
+  end
+  
+  logic [3:0] b_gamma1_omega_prd3;
+  aes_dom_dep_mul_gf2pn #(
+    .NPower      ( 2           ),
+    .Pipeline    ( PipelineMul ),
+    .PreDomIndep ( 1'b0        )
+  ) u_aes_dom_mul_omega_gamma1 (
+    .clk_i  ( clk_i               ),
+    .rst_ni ( rst_ni              ),
+    .we_i   ( we_i[1]             ),
+    .a_x    ( a_gamma1_q          ), 
+    .a_y    ( a_omega_buf         ), 
+    .b_x    ( b_gamma1_q          ), 
+    .b_y    ( b_omega_buf         ), 
+    .a_x_q  ( a_gamma1_qq         ), 
+    .a_y_q  ( a_omega_buf_q       ), 
+    .b_x_q  ( b_gamma1_qq         ), 
+    .b_y_q  ( b_omega_buf_q       ), 
+    .z_0    ( prd_3_i[5:4]        ), 
+    .z_1    ( prd_3_i[7:6]        ), 
+    .a_q    ( a_gamma_inv[1:0]    ), 
+    .b_q    ( b_gamma_inv[1:0]    ), 
+    .prd_o  ( b_gamma1_omega_prd3 )  
+  );
+  logic [3:0] b_gamma0_omega_prd3;
+  aes_dom_dep_mul_gf2pn #(
+    .NPower      ( 2           ),
+    .Pipeline    ( PipelineMul ),
+    .PreDomIndep ( 1'b0        )
+  ) u_aes_dom_mul_omega_gamma0 (
+    .clk_i  ( clk_i               ),
+    .rst_ni ( rst_ni              ),
+    .we_i   ( we_i[1]             ),
+    .a_x    ( a_omega_buf         ), 
+    .a_y    ( a_gamma0_q          ), 
+    .b_x    ( b_omega_buf         ), 
+    .b_y    ( b_gamma0_q          ), 
+    .a_x_q  ( a_omega_buf_q       ), 
+    .a_y_q  ( a_gamma0_qq         ), 
+    .b_x_q  ( b_omega_buf_q       ), 
+    .b_y_q  ( b_gamma0_qq         ), 
+    .z_0    ( prd_3_i[1:0]        ), 
+    .z_1    ( prd_3_i[3:2]        ), 
+    .a_q    ( a_gamma_inv[3:2]    ), 
+    .b_q    ( b_gamma_inv[3:2]    ), 
+    .prd_o  ( b_gamma0_omega_prd3 )  
+  );
+  
+  
+  
+  
+  assign prd_3_o = {b_gamma1_omega_prd3, b_gamma0_omega_prd3};
+endmodule
+module aes_dom_inverse_gf2p8 #(
+  parameter bit PipelineMul = 1'b1
+) (
+  input  logic                  clk_i,
+  input  logic                  rst_ni,
+  input  logic            [3:0] we_i,
+  input  logic            [7:0] a_y,     
+  input  logic            [7:0] b_y,     
+  input  aes_sbox_dom_prd_in_t  prd_i,   
+  output logic            [7:0] a_y_inv, 
+  output logic            [7:0] b_y_inv, 
+  output aes_sbox_dom_prd_out_t prd_o    
+);                                       
+  import aes_sbox_canright_pkg::*;
+  
+  
+  
+  
+  logic [3:0] a_y1, a_y0, b_y1, b_y0, a_y1_y0, b_y1_y0;
+  assign a_y1 = a_y[7:4];
+  assign a_y0 = a_y[3:0];
+  assign b_y1 = b_y[7:4];
+  assign b_y0 = b_y[3:0];
+  logic [3:0] a_y_ss_d, b_y_ss_d;
+  logic [3:0] a_y_ss_q, b_y_ss_q;
+  assign a_y_ss_d = aes_square_scale_gf2p4_gf2p2(a_y1 ^ a_y0);
+  assign b_y_ss_d = aes_square_scale_gf2p4_gf2p2(b_y1 ^ b_y0);
+  prim_flop_en #(
+    .Width      ( 8  ),
+    .ResetValue ( '0 )
+  ) u_prim_flop_ab_y_ss (
+    .clk_i  ( clk_i                ),
+    .rst_ni ( rst_ni               ),
+    .en_i   ( we_i[0]              ),
+    .d_i    ( {a_y_ss_d, b_y_ss_d} ),
+    .q_o    ( {a_y_ss_q, b_y_ss_q} )
+  );
+  logic [3:0] a_y1_q, a_y0_q, b_y1_q, b_y0_q;
+  if (PipelineMul == 1'b1) begin: gen_prim_flop_ab_y10
+    
+    
+    prim_flop_en #(
+      .Width      ( 16  ),
+      .ResetValue ( '0  )
+    ) u_prim_flop_ab_y10 (
+      .clk_i  ( clk_i                            ),
+      .rst_ni ( rst_ni                           ),
+      .en_i   ( we_i[0]                          ),
+      .d_i    ( {a_y1,   a_y0,   b_y1,   b_y0}   ),
+      .q_o    ( {a_y1_q, a_y0_q, b_y1_q, b_y0_q} )
+    );
+  end else begin : gen_no_prim_flop_ab_y10
+    
+    
+    
+    assign a_y1_q = '0;
+    assign a_y0_q = '0;
+    assign b_y1_q = '0;
+    assign b_y0_q = '0;
+  end
+  logic [7:0] b_y10_prd1;
+  aes_dom_dep_mul_gf2pn #(
+    .NPower      ( 4           ),
+    .Pipeline    ( PipelineMul ),
+    .PreDomIndep ( 1'b0        )
+  ) u_aes_dom_mul_y1_y0 (
+    .clk_i  ( clk_i            ),
+    .rst_ni ( rst_ni           ),
+    .we_i   ( we_i[0]          ),
+    .a_x    ( a_y1             ), 
+    .a_y    ( a_y0             ), 
+    .b_x    ( b_y1             ), 
+    .b_y    ( b_y0             ), 
+    .a_x_q  ( a_y1_q           ), 
+    .a_y_q  ( a_y0_q           ), 
+    .b_x_q  ( b_y1_q           ), 
+    .b_y_q  ( b_y0_q           ), 
+    .z_0    ( prd_i.prd_1[3:0] ), 
+    .z_1    ( prd_i.prd_1[7:4] ), 
+    .a_q    ( a_y1_y0          ), 
+    .b_q    ( b_y1_y0          ), 
+    .prd_o  ( b_y10_prd1       )  
+  );
+  logic [3:0] a_gamma, b_gamma;
+  assign a_gamma = a_y_ss_q ^ a_y1_y0;
+  assign b_gamma = b_y_ss_q ^ b_y1_y0;
+  
+  logic [3:0] a_gamma_buf, b_gamma_buf;
+  prim_buf #(
+    .Width ( 8 )
+  ) u_prim_buf_ab_gamma (
+    .in_i  ( {a_gamma,     b_gamma}     ),
+    .out_o ( {a_gamma_buf, b_gamma_buf} )
+  );
+  
+  
+  
+  
+  assign prd_o.prd_1 = b_y10_prd1[3:0];
+  logic [3:0] unused_prd;
+  assign unused_prd  = b_y10_prd1[7:4];
+  
+  
+  
+  logic [3:0] a_theta, b_theta;
+  
+  aes_dom_inverse_gf2p4 #(
+    .PipelineMul ( PipelineMul )
+  ) u_aes_dom_inverse_gf2p4 (
+    .clk_i       ( clk_i       ),
+    .rst_ni      ( rst_ni      ),
+    .we_i        ( we_i[2:1]   ),
+    .a_gamma     ( a_gamma_buf ),
+    .b_gamma     ( b_gamma_buf ),
+    .prd_2_i     ( prd_i.prd_2 ),
+    .prd_3_i     ( prd_i.prd_3 ),
+    .a_gamma_inv ( a_theta     ),
+    .b_gamma_inv ( b_theta     ),
+    .prd_2_o     ( prd_o.prd_2 ),
+    .prd_3_o     ( prd_o.prd_3 )
+  );
+  
+  
+  
+  
+  logic [3:0] a_y1_qqq, a_y0_qqq, b_y1_qqq, b_y0_qqq;
+  prim_flop_en #(
+    .Width      ( 16 ),
+    .ResetValue ( '0 )
+  ) u_prim_flop_ab_y10_qqq (
+    .clk_i  ( clk_i                                    ),
+    .rst_ni ( rst_ni                                   ),
+    .en_i   ( we_i[2]                                  ),
+    .d_i    ( {a_y1,     a_y0,     b_y1,     b_y0}     ),
+    .q_o    ( {a_y1_qqq, a_y0_qqq, b_y1_qqq, b_y0_qqq} )
+  );
+  aes_dom_indep_mul_gf2pn #(
+    .NPower   ( 4           ),
+    .Pipeline ( PipelineMul )
+  ) u_aes_dom_mul_theta_y1 (
+    .clk_i  ( clk_i            ),
+    .rst_ni ( rst_ni           ),
+    .we_i   ( we_i[3]          ),
+    .a_x    ( a_y1_qqq         ), 
+    .a_y    ( a_theta          ), 
+    .b_x    ( b_y1_qqq         ), 
+    .b_y    ( b_theta          ), 
+    .z_0    ( prd_i.prd_4[7:4] ), 
+    .a_q    ( a_y_inv[3:0]     ), 
+    .b_q    ( b_y_inv[3:0]     )  
+  );
+  aes_dom_indep_mul_gf2pn #(
+    .NPower   ( 4           ),
+    .Pipeline ( PipelineMul )
+  ) u_aes_dom_mul_theta_y0 (
+    .clk_i  ( clk_i            ),
+    .rst_ni ( rst_ni           ),
+    .we_i   ( we_i[3]          ),
+    .a_x    ( a_theta          ), 
+    .a_y    ( a_y0_qqq         ), 
+    .b_x    ( b_theta          ), 
+    .b_y    ( b_y0_qqq         ), 
+    .z_0    ( prd_i.prd_4[3:0] ), 
+    .a_q    ( a_y_inv[7:4]     ), 
+    .b_q    ( b_y_inv[7:4]     )  
+  );
+endmodule
+module aes_sbox_dom
+#(
+  parameter bit PipelineMul = 1'b1
+) (
+  input  logic              clk_i,
+  input  logic              rst_ni,
+  input  logic              en_i,
+  output logic              out_req_o,
+  input  logic              out_ack_i,
+  input  aes_pkg::ciph_op_e op_i,
+  input  logic        [7:0] data_i, 
+  input  logic        [7:0] mask_i, 
+  input  logic       [27:0] prd_i,  
+                                    
+  output logic        [7:0] data_o, 
+  output logic        [7:0] mask_o, 
+  output logic       [19:0] prd_o   
+);
+  import aes_pkg::*;
+  import aes_sbox_canright_pkg::*;
+  logic            [7:0] in_data_basis_x, out_data_basis_x;
+  logic            [7:0] in_mask_basis_x, out_mask_basis_x;
+  logic            [3:0] we;
+  aes_sbox_dom_prd_in_t  in_prd;
+  aes_sbox_dom_prd_out_t out_prd;
+  
+  assign in_data_basis_x = (op_i == CIPH_FWD) ? aes_mvm(data_i, A2X)         :
+                           (op_i == CIPH_INV) ? aes_mvm(data_i ^ 8'h63, S2X) :
+                                                aes_mvm(data_i, A2X);
+  
+  
+  assign in_mask_basis_x = (op_i == CIPH_FWD) ? aes_mvm(mask_i, A2X) :
+                           (op_i == CIPH_INV) ? aes_mvm(mask_i, S2X) :
+                                                aes_mvm(mask_i, A2X);
+  
+  aes_dom_inverse_gf2p8 #(
+    .PipelineMul ( PipelineMul )
+  ) u_aes_dom_inverse_gf2p8 (
+    .clk_i   ( clk_i            ),
+    .rst_ni  ( rst_ni           ),
+    .we_i    ( we               ),
+    .a_y     ( in_data_basis_x  ), 
+    .b_y     ( in_mask_basis_x  ), 
+    .prd_i   ( in_prd           ), 
+    .a_y_inv ( out_data_basis_x ), 
+    .b_y_inv ( out_mask_basis_x ), 
+    .prd_o   ( out_prd          )  
+  );
+  
+  assign data_o = (op_i == CIPH_FWD) ? (aes_mvm(out_data_basis_x, X2S) ^ 8'h63) :
+                  (op_i == CIPH_INV) ? (aes_mvm(out_data_basis_x, X2A))         :
+                                       (aes_mvm(out_data_basis_x, X2S) ^ 8'h63);
+  
+  
+  assign mask_o = (op_i == CIPH_FWD) ? aes_mvm(out_mask_basis_x, X2S) :
+                  (op_i == CIPH_INV) ? aes_mvm(out_mask_basis_x, X2A) :
+                                       aes_mvm(out_mask_basis_x, X2S);
+  
+  logic [2:0] count_d, count_q;
+  assign count_d = (out_req_o && out_ack_i) ? '0             :
+                   out_req_o                ? count_q        :
+                   en_i                     ? count_q + 3'd1 : count_q;
+  always_ff @(posedge clk_i or negedge rst_ni) begin : reg_count
+    if (!rst_ni) begin
+      count_q <= '0;
+    end else begin
+      count_q <= count_d;
+    end
+  end
+  assign out_req_o = en_i & count_q == 3'd4;
+  
+  assign we[0] = en_i & count_q == 3'd0;
+  assign we[1] = en_i & count_q == 3'd1;
+  assign we[2] = en_i & count_q == 3'd2;
+  assign we[3] = en_i & count_q == 3'd3;
+  
+  
+  assign in_prd = '{prd_1: prd_i[7:0],
+                    prd_2: prd_i[11:8],
+                    prd_3: prd_i[19:12],
+                    prd_4: prd_i[27:20]};
+  assign prd_o = {out_prd.prd_3, out_prd.prd_2, out_prd.prd_1};
+endmodule
+
+module aes_sbox_lut (
+  input  aes_pkg::ciph_op_e op_i,
+  input  logic [7:0]        data_i,
+  output logic [7:0]        data_o
+);
+  import aes_pkg::*;
+  
+  localparam logic [7:0] SBOX_FWD [256] = '{
+    8'h63, 8'h7C, 8'h77, 8'h7B, 8'hF2, 8'h6B, 8'h6F, 8'hC5,
+    8'h30, 8'h01, 8'h67, 8'h2B, 8'hFE, 8'hD7, 8'hAB, 8'h76,
+    8'hCA, 8'h82, 8'hC9, 8'h7D, 8'hFA, 8'h59, 8'h47, 8'hF0,
+    8'hAD, 8'hD4, 8'hA2, 8'hAF, 8'h9C, 8'hA4, 8'h72, 8'hC0,
+    8'hB7, 8'hFD, 8'h93, 8'h26, 8'h36, 8'h3F, 8'hF7, 8'hCC,
+    8'h34, 8'hA5, 8'hE5, 8'hF1, 8'h71, 8'hD8, 8'h31, 8'h15,
+    8'h04, 8'hC7, 8'h23, 8'hC3, 8'h18, 8'h96, 8'h05, 8'h9A,
+    8'h07, 8'h12, 8'h80, 8'hE2, 8'hEB, 8'h27, 8'hB2, 8'h75,
+    8'h09, 8'h83, 8'h2C, 8'h1A, 8'h1B, 8'h6E, 8'h5A, 8'hA0,
+    8'h52, 8'h3B, 8'hD6, 8'hB3, 8'h29, 8'hE3, 8'h2F, 8'h84,
+    8'h53, 8'hD1, 8'h00, 8'hED, 8'h20, 8'hFC, 8'hB1, 8'h5B,
+    8'h6A, 8'hCB, 8'hBE, 8'h39, 8'h4A, 8'h4C, 8'h58, 8'hCF,
+    8'hD0, 8'hEF, 8'hAA, 8'hFB, 8'h43, 8'h4D, 8'h33, 8'h85,
+    8'h45, 8'hF9, 8'h02, 8'h7F, 8'h50, 8'h3C, 8'h9F, 8'hA8,
+    8'h51, 8'hA3, 8'h40, 8'h8F, 8'h92, 8'h9D, 8'h38, 8'hF5,
+    8'hBC, 8'hB6, 8'hDA, 8'h21, 8'h10, 8'hFF, 8'hF3, 8'hD2,
+    8'hCD, 8'h0C, 8'h13, 8'hEC, 8'h5F, 8'h97, 8'h44, 8'h17,
+    8'hC4, 8'hA7, 8'h7E, 8'h3D, 8'h64, 8'h5D, 8'h19, 8'h73,
+    8'h60, 8'h81, 8'h4F, 8'hDC, 8'h22, 8'h2A, 8'h90, 8'h88,
+    8'h46, 8'hEE, 8'hB8, 8'h14, 8'hDE, 8'h5E, 8'h0B, 8'hDB,
+    8'hE0, 8'h32, 8'h3A, 8'h0A, 8'h49, 8'h06, 8'h24, 8'h5C,
+    8'hC2, 8'hD3, 8'hAC, 8'h62, 8'h91, 8'h95, 8'hE4, 8'h79,
+    8'hE7, 8'hC8, 8'h37, 8'h6D, 8'h8D, 8'hD5, 8'h4E, 8'hA9,
+    8'h6C, 8'h56, 8'hF4, 8'hEA, 8'h65, 8'h7A, 8'hAE, 8'h08,
+    8'hBA, 8'h78, 8'h25, 8'h2E, 8'h1C, 8'hA6, 8'hB4, 8'hC6,
+    8'hE8, 8'hDD, 8'h74, 8'h1F, 8'h4B, 8'hBD, 8'h8B, 8'h8A,
+    8'h70, 8'h3E, 8'hB5, 8'h66, 8'h48, 8'h03, 8'hF6, 8'h0E,
+    8'h61, 8'h35, 8'h57, 8'hB9, 8'h86, 8'hC1, 8'h1D, 8'h9E,
+    8'hE1, 8'hF8, 8'h98, 8'h11, 8'h69, 8'hD9, 8'h8E, 8'h94,
+    8'h9B, 8'h1E, 8'h87, 8'hE9, 8'hCE, 8'h55, 8'h28, 8'hDF,
+    8'h8C, 8'hA1, 8'h89, 8'h0D, 8'hBF, 8'hE6, 8'h42, 8'h68,
+    8'h41, 8'h99, 8'h2D, 8'h0F, 8'hB0, 8'h54, 8'hBB, 8'h16
+  };
+  localparam logic [7:0] SBOX_INV [256] = '{
+    8'h52, 8'h09, 8'h6a, 8'hd5, 8'h30, 8'h36, 8'ha5, 8'h38,
+    8'hbf, 8'h40, 8'ha3, 8'h9e, 8'h81, 8'hf3, 8'hd7, 8'hfb,
+    8'h7c, 8'he3, 8'h39, 8'h82, 8'h9b, 8'h2f, 8'hff, 8'h87,
+    8'h34, 8'h8e, 8'h43, 8'h44, 8'hc4, 8'hde, 8'he9, 8'hcb,
+    8'h54, 8'h7b, 8'h94, 8'h32, 8'ha6, 8'hc2, 8'h23, 8'h3d,
+    8'hee, 8'h4c, 8'h95, 8'h0b, 8'h42, 8'hfa, 8'hc3, 8'h4e,
+    8'h08, 8'h2e, 8'ha1, 8'h66, 8'h28, 8'hd9, 8'h24, 8'hb2,
+    8'h76, 8'h5b, 8'ha2, 8'h49, 8'h6d, 8'h8b, 8'hd1, 8'h25,
+    8'h72, 8'hf8, 8'hf6, 8'h64, 8'h86, 8'h68, 8'h98, 8'h16,
+    8'hd4, 8'ha4, 8'h5c, 8'hcc, 8'h5d, 8'h65, 8'hb6, 8'h92,
+    8'h6c, 8'h70, 8'h48, 8'h50, 8'hfd, 8'hed, 8'hb9, 8'hda,
+    8'h5e, 8'h15, 8'h46, 8'h57, 8'ha7, 8'h8d, 8'h9d, 8'h84,
+    8'h90, 8'hd8, 8'hab, 8'h00, 8'h8c, 8'hbc, 8'hd3, 8'h0a,
+    8'hf7, 8'he4, 8'h58, 8'h05, 8'hb8, 8'hb3, 8'h45, 8'h06,
+    8'hd0, 8'h2c, 8'h1e, 8'h8f, 8'hca, 8'h3f, 8'h0f, 8'h02,
+    8'hc1, 8'haf, 8'hbd, 8'h03, 8'h01, 8'h13, 8'h8a, 8'h6b,
+    8'h3a, 8'h91, 8'h11, 8'h41, 8'h4f, 8'h67, 8'hdc, 8'hea,
+    8'h97, 8'hf2, 8'hcf, 8'hce, 8'hf0, 8'hb4, 8'he6, 8'h73,
+    8'h96, 8'hac, 8'h74, 8'h22, 8'he7, 8'had, 8'h35, 8'h85,
+    8'he2, 8'hf9, 8'h37, 8'he8, 8'h1c, 8'h75, 8'hdf, 8'h6e,
+    8'h47, 8'hf1, 8'h1a, 8'h71, 8'h1d, 8'h29, 8'hc5, 8'h89,
+    8'h6f, 8'hb7, 8'h62, 8'h0e, 8'haa, 8'h18, 8'hbe, 8'h1b,
+    8'hfc, 8'h56, 8'h3e, 8'h4b, 8'hc6, 8'hd2, 8'h79, 8'h20,
+    8'h9a, 8'hdb, 8'hc0, 8'hfe, 8'h78, 8'hcd, 8'h5a, 8'hf4,
+    8'h1f, 8'hdd, 8'ha8, 8'h33, 8'h88, 8'h07, 8'hc7, 8'h31,
+    8'hb1, 8'h12, 8'h10, 8'h59, 8'h27, 8'h80, 8'hec, 8'h5f,
+    8'h60, 8'h51, 8'h7f, 8'ha9, 8'h19, 8'hb5, 8'h4a, 8'h0d,
+    8'h2d, 8'he5, 8'h7a, 8'h9f, 8'h93, 8'hc9, 8'h9c, 8'hef,
+    8'ha0, 8'he0, 8'h3b, 8'h4d, 8'hae, 8'h2a, 8'hf5, 8'hb0,
+    8'hc8, 8'heb, 8'hbb, 8'h3c, 8'h83, 8'h53, 8'h99, 8'h61,
+    8'h17, 8'h2b, 8'h04, 8'h7e, 8'hba, 8'h77, 8'hd6, 8'h26,
+    8'he1, 8'h69, 8'h14, 8'h63, 8'h55, 8'h21, 8'h0c, 8'h7d
+  };
+  
+  assign data_o = (op_i == CIPH_FWD) ? SBOX_FWD[data_i] :
+                  (op_i == CIPH_INV) ? SBOX_INV[data_i] : SBOX_FWD[data_i];
+endmodule
+
+`ifndef PRIM_ASSERT_SV
+`define PRIM_ASSERT_SV
+`define ASSERT_DEFAULT_CLK clk_i
+`define ASSERT_DEFAULT_RST !rst_ni
+`define PRIM_STRINGIFY(__x) `"__x`"
+`define ASSERT_ERROR(__name)                                                             \
+`ifdef UVM                                                                               \
+  uvm_pkg::uvm_report_error("ASSERT FAILED", `PRIM_STRINGIFY(__name), uvm_pkg::UVM_NONE, \
+                            `__FILE__, `__LINE__, "", 1);                                \
+`else                                                                                    \
+  $error("%0t: (%0s:%0d) [%m] [ASSERT FAILED] %0s", $time, `__FILE__, `__LINE__,         \
+         `PRIM_STRINGIFY(__name));                                                       \
+`endif
+`define ASSERT_STATIC_LINT_ERROR(__name, __prop)     \
+  localparam int __name = (__prop) ? 1 : 2;          \
+  always_comb begin                                  \
+    logic unused_assert_static_lint_error;           \
+    unused_assert_static_lint_error = __name'(1'b1); \
+  end
+`define ASSERT_STATIC_IN_PACKAGE(__name, __prop)              \
+  function automatic bit assert_static_in_package_``__name(); \
+    bit unused_bit [((__prop) ? 1 : -1)];                     \
+    unused_bit = '{default: 1'b0};                            \
+    return unused_bit[0];                                     \
+  endfunction
+`ifdef VERILATOR
+ `include "prim_assert_dummy_macros.svh"`elsif SYNTHESIS
+ `include "prim_assert_dummy_macros.svh"`elsif YOSYS
+ `include "prim_assert_yosys_macros.svh"
+ `define INC_ASSERT`else
+ 
+`define ASSERT_I(__name, __prop) \
+  __name: assert (__prop)        \
+    else begin                   \
+      `ASSERT_ERROR(__name)      \
+    end
+`define ASSERT_INIT(__name, __prop)                                                  \
+`ifdef FPV_ON                                                                        \
+  if (!(__prop)) $fatal(2, "Fatal static assertion [%s]: (%s) is not true.",         \
+                        (__name), (__prop));                                         \
+`else                                                                                \
+  initial begin                                                                      \
+    __name: assert (__prop)                                                          \
+      else begin                                                                     \
+        `ASSERT_ERROR(__name)                                                        \
+      end                                                                            \
+  end                                                                                \
+`endif
+`define ASSERT_INIT_NET(__name, __prop)                                                   \
+  initial begin                                                                      \
+    
+    
+    
+    #1ps;                                                                            \
+    __name: assert (__prop)                                                          \
+      else begin                                                                     \
+        `ASSERT_ERROR(__name)                                                        \
+      end                                                                            \
+  end                                                                                \
+`define ASSERT_FINAL(__name, __prop)                                         \
+`ifndef FPV_ON                                                               \
+  final begin                                                                \
+    __name: assert (__prop || $test$plusargs("disable_assert_final_checks")) \
+      else begin                                                             \
+        `ASSERT_ERROR(__name)                                                \
+      end                                                                    \
+  end                                                                        \
+`endif
+`define ASSERT_AT_RESET(__name, __prop, __rst = `ASSERT_DEFAULT_RST)          \
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+`ifndef FPV_ON                                                                \
+  __name: assert property (@(posedge __rst) $isunknown(__rst) || (__prop))    \
+`else                                                                         \
+  __name: assert property (@(posedge __rst) (__prop))                         \
+`endif                                                                        \
+    else begin                                                                \
+      `ASSERT_ERROR(__name)                                                   \
+    end
+`define ASSERT_AT_RESET_AND_FINAL(__name, __prop, __rst = `ASSERT_DEFAULT_RST) \
+    `ASSERT_AT_RESET(AtReset_``__name``, __prop, __rst)                        \
+    `ASSERT_FINAL(Final_``__name``, __prop)
+`define ASSERT(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: assert property (@(posedge __clk) disable iff ((__rst) !== '0) (__prop))       \
+    else begin                                                                           \
+      `ASSERT_ERROR(__name)                                                              \
+    end
+`define ASSERT_NEVER(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: assert property (@(posedge __clk) disable iff ((__rst) !== '0) not (__prop))         \
+    else begin                                                                                 \
+      `ASSERT_ERROR(__name)                                                                    \
+    end
+`define ASSERT_KNOWN(__name, __sig, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifndef FPV_ON                                                                                \
+  `ASSERT(__name, !$isunknown(__sig), __clk, __rst)                                           \
+`endif
+`define COVER(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: cover property (@(posedge __clk) disable iff ((__rst) !== '0) (__prop));
+`define ASSUME(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  __name: assume property (@(posedge __clk) disable iff ((__rst) !== '0) (__prop))       \
+    else begin                                                                           \
+      `ASSERT_ERROR(__name)                                                              \
+    end
+`define ASSUME_I(__name, __prop) \
+  __name: assume (__prop)        \
+    else begin                   \
+      `ASSERT_ERROR(__name)      \
+    end
+ `define INC_ASSERT
+`endif
+`define ASSERT_PULSE(__name, __sig, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  `ASSERT(__name, $rose(__sig) |=> !(__sig), __clk, __rst)
+`define ASSERT_IF(__name, __prop, __enable, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  `ASSERT(__name, (__enable) |-> (__prop), __clk, __rst)
+`define ASSERT_KNOWN_IF(__name, __sig, __enable, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifndef FPV_ON                                                                                             \
+  `ASSERT_KNOWN(__name``KnownEnable, __enable, __clk, __rst)                                               \
+  `ASSERT_IF(__name, !$isunknown(__sig), __enable, __clk, __rst)                                           \
+`endif
+`define ASSUME_FPV(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifdef FPV_ON                                                                                \
+   `ASSUME(__name, __prop, __clk, __rst)                                                     \
+`endif
+`define ASSUME_I_FPV(__name, __prop) \
+`ifdef FPV_ON                        \
+   `ASSUME_I(__name, __prop)         \
+`endif
+`define COVER_FPV(__name, __prop, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+`ifdef FPV_ON                                                                               \
+   `COVER(__name, __prop, __clk, __rst)                                                     \
+`endif
+`define ASSERT_FPV_LINEAR_FSM(__name, __state, __type, __clk = `ASSERT_DEFAULT_CLK, __rst = `ASSERT_DEFAULT_RST) \
+  `ifdef INC_ASSERT                                                                                              \
+     bit __name``_cond;                                                                                          \
+     always_ff @(posedge __clk or posedge __rst) begin                                                           \
+       if (__rst) begin                                                                                          \
+         __name``_cond <= 0;                                                                                     \
+       end else begin                                                                                            \
+         __name``_cond <= 1;                                                                                     \
+       end                                                                                                       \
+     end                                                                                                         \
+     property __name``_p;                                                                                        \
+       __type initial_state;                                                                                     \
+       (!$stable(__state) & __name``_cond, initial_state = $past(__state)) |->                                   \
+           (__state != initial_state) until !(__name``_cond);                                                    \
+     endproperty                                                                                                 \
+   `ASSERT(__name, __name``_p, __clk, 0)                                                                         \
+  `endif
+`ifndef PRIM_ASSERT_SEC_CM_SVH
+`define PRIM_ASSERT_SEC_CM_SVH
+`define _SEC_CM_ALERT_MAX_CYC 30
+`define ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, ERR_NAME_, CLK_, RST_) \
+  `ASSERT(FpvSecCm``NAME_``,                                                                    \
+          $rose(HIER_.ERR_NAME_) && !(GATE_) |-> ##[0:MAX_CYCLES_] (ERR_),                      \
+          CLK_, RST_)                                                                           \
+  `ifdef INC_ASSERT                                                                             \
+    assign HIER_.unused_assert_connected = 1'b1;                                                \
+  `endif
+`define ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, ERR_NAME_)    \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, (ALERT_.alert_p), GATE_, MAX_CYCLES_, ERR_NAME_, \
+                            `ASSERT_DEFAULT_CLK, `ASSERT_DEFAULT_RST)                      \
+  `ASSUME_FPV(``NAME_``TriggerAfterAlertInit_S,                                            \
+              $stable(rst_ni) == 0 |-> HIER_.ERR_NAME_ == 0 [*10])
+`define ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_IN_, GATE_, MAX_CYCLES_, ERR_NAME_) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ALERT_IN_, GATE_, MAX_CYCLES_, ERR_NAME_,           \
+                            `ASSERT_DEFAULT_CLK, `ASSERT_DEFAULT_RST)
+`define ASSERT_PRIM_COUNT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_DOUBLE_LFSR_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_FSM_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, unused_err_o)
+`define ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_REG_WE_ONEHOT_ERROR_TRIGGER_ALERT(NAME_, REG_TOP_HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT(NAME_, \
+    REG_TOP_HIER_.u_prim_reg_we_check.u_prim_onehot_check, ALERT_, GATE_, MAX_CYCLES_)
+`define ASSERT_PRIM_FIFO_SYNC_SINGLETON_ERROR_TRIGGER_ALERT(NAME, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC) \
+  `ASSERT_ERROR_TRIGGER_ALERT(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_COUNT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_DOUBLE_LFSR_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_FSM_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, unused_err_o)
+`define ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_REG_WE_ONEHOT_ERROR_TRIGGER_ALERT_IN(NAME_, REG_TOP_HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ALERT_IN(NAME_, \
+    REG_TOP_HIER_.u_prim_reg_we_check.u_prim_onehot_check, ALERT_, GATE_, MAX_CYCLES_)
+`define ASSERT_PRIM_FIFO_SYNC_SINGLETON_ERROR_TRIGGER_ALERT_IN(NAME, HIER_, ALERT_, GATE_ = 0, MAX_CYCLES_ = 2) \
+  `ASSERT_ERROR_TRIGGER_ALERT_IN(NAME_, HIER_, ALERT_, GATE_, MAX_CYCLES_, err_o)
+`define ASSERT_PRIM_FSM_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = 2, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, unused_err_o, CLK_, RST_)
+`define ASSERT_PRIM_COUNT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = 2, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, err_o, CLK_, RST_)
+`define ASSERT_PRIM_DOUBLE_LFSR_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = 2, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, err_o, CLK_, RST_)
+`define ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_ERROR_TRIGGER_ERR(NAME_, HIER_, ERR_, GATE_, MAX_CYCLES_, err_o, CLK_, RST_)
+`define ASSERT_PRIM_REG_WE_ONEHOT_ERROR_TRIGGER_ERR(NAME_, REG_TOP_HIER_, ERR_, GATE_ = 0, MAX_CYCLES_ = `_SEC_CM_ALERT_MAX_CYC, CLK_ = clk_i, RST_ = !rst_ni) \
+  `ASSERT_PRIM_ONEHOT_ERROR_TRIGGER_ERR(NAME_, \
+    REG_TOP_HIER_.u_prim_reg_we_check.u_prim_onehot_check, ERR_, GATE_, MAX_CYCLES_, CLK_, RST_)
+`endif 
+`ifndef PRIM_FLOP_MACROS_SV
+`define PRIM_FLOP_MACROS_SV
+`define PRIM_FLOP_CLK clk_i
+`define PRIM_FLOP_RST rst_ni
+`define PRIM_FLOP_RESVAL '0
+`define PRIM_FLOP_A(__d, __q, __resval = `PRIM_FLOP_RESVAL, __clk = `PRIM_FLOP_CLK, __rst_n = `PRIM_FLOP_RST) \
+  always_ff @(posedge __clk or negedge __rst_n) begin \
+    if (!__rst_n) begin                               \
+      __q <= __resval;                                \
+    end else begin                                    \
+      __q <= __d;                                     \
+    end                                               \
+  end
+`define PRIM_FLOP_SPARSE_FSM(__name, __d, __q, __type, __resval = `PRIM_FLOP_RESVAL, __clk = `PRIM_FLOP_CLK, __rst_n = `PRIM_FLOP_RST, __alert_trigger_sva_en = 1) \
+  `ifdef SIMULATION                                   \
+    prim_sparse_fsm_flop #(                           \
+      .StateEnumT(__type),                            \
+      .Width($bits(__type)),                          \
+      .ResetValue($bits(__type)'(__resval)),          \
+      .EnableAlertTriggerSVA(__alert_trigger_sva_en), \
+      .CustomForceName(`PRIM_STRINGIFY(__q))          \
+    ) __name (                                        \
+      .clk_i   ( __clk   ),                           \
+      .rst_ni  ( __rst_n ),                           \
+      .state_i ( __d     ),                           \
+      .state_o (         )                            \
+    );                                                \
+    `PRIM_FLOP_A(__d, __q, __resval, __clk, __rst_n)  \
+    `ASSERT(``__name``_A, __q === ``__name``.state_o) \
+  `else                                               \
+    prim_sparse_fsm_flop #(                           \
+      .StateEnumT(__type),                            \
+      .Width($bits(__type)),                          \
+      .ResetValue($bits(__type)'(__resval)),          \
+      .EnableAlertTriggerSVA(__alert_trigger_sva_en)  \
+    ) __name (                                        \
+      .clk_i   ( __clk   ),                           \
+      .rst_ni  ( __rst_n ),                           \
+      .state_i ( __d     ),                           \
+      .state_o ( __q     )                            \
+    );                                                \
+  `endif
+`endif 
+`endif 
+module aes_sel_buf_chk #(
+  parameter int Num      = 2,
+  parameter int Width    = 1,
+  parameter bit EnSecBuf = 1'b0
+) (
+  input  logic             clk_i,  
+  input  logic             rst_ni, 
+  input  logic [Width-1:0] sel_i,
+  output logic [Width-1:0] sel_o,
+  output logic             err_o
+);
+  import aes_pkg::*;
+  
+  logic unused_clk;
+  logic unused_rst;
+  assign unused_clk = clk_i;
+  assign unused_rst = rst_ni;
+  
+  
+  
+  if (EnSecBuf) begin : gen_sec_buf
+    prim_sec_anchor_buf #(
+      .Width ( Width )
+    ) u_prim_buf_sel_i (
+      .in_i  ( sel_i ),
+      .out_o ( sel_o )
+    );
+  end else begin : gen_buf
+    prim_buf  #(
+      .Width ( Width )
+    ) u_prim_buf_sel_i (
+      .in_i  ( sel_i ),
+      .out_o ( sel_o )
+    );
+  end
+  
+  
+  
+  if (Num == 2) begin : gen_mux2_sel_chk
+    
+    mux2_sel_e sel_chk;
+    assign sel_chk = mux2_sel_e'(sel_o);
+    
+    always_comb begin : mux2_sel_chk
+      unique case (sel_chk)
+        MUX2_SEL_0,
+        MUX2_SEL_1: err_o = 1'b0;
+        default:    err_o = 1'b1;
+      endcase
+    end
+    
+    `ASSERT(AesMux2SelValid, !err_o |-> sel_chk inside {
+        MUX2_SEL_0,
+        MUX2_SEL_1
+        })
+  end else if (Num == 3) begin : gen_mux3_sel_chk
+    
+    mux3_sel_e sel_chk;
+    assign sel_chk = mux3_sel_e'(sel_o);
+    
+    always_comb begin : mux3_sel_chk
+      unique case (sel_chk)
+        MUX3_SEL_0,
+        MUX3_SEL_1,
+        MUX3_SEL_2: err_o = 1'b0;
+        default:    err_o = 1'b1;
+      endcase
+    end
+    
+    `ASSERT(AesMux3SelValid, !err_o |-> sel_chk inside {
+        MUX3_SEL_0,
+        MUX3_SEL_1,
+        MUX3_SEL_2
+        })
+  end else if (Num == 4) begin : gen_mux4_sel_chk
+    
+    mux4_sel_e sel_chk;
+    assign sel_chk = mux4_sel_e'(sel_o);
+    
+    always_comb begin : mux4_sel_chk
+      unique case (sel_chk)
+        MUX4_SEL_0,
+        MUX4_SEL_1,
+        MUX4_SEL_2,
+        MUX4_SEL_3: err_o = 1'b0;
+        default:    err_o = 1'b1;
+      endcase
+    end
+    
+    `ASSERT(AesMux4SelValid, !err_o |-> sel_chk inside {
+        MUX4_SEL_0,
+        MUX4_SEL_1,
+        MUX4_SEL_2,
+        MUX4_SEL_3
+        })
+  end else if (Num == 6) begin : gen_mux6_sel_chk
+    
+    mux6_sel_e sel_chk;
+    assign sel_chk = mux6_sel_e'(sel_o);
+    
+    always_comb begin : mux6_sel_chk
+      unique case (sel_chk)
+        MUX6_SEL_0,
+        MUX6_SEL_1,
+        MUX6_SEL_2,
+        MUX6_SEL_3,
+        MUX6_SEL_4,
+        MUX6_SEL_5: err_o = 1'b0;
+        default:    err_o = 1'b1;
+      endcase
+    end
+    
+    `ASSERT(AesMux6SelValid, !err_o |-> sel_chk inside {
+        MUX6_SEL_0,
+        MUX6_SEL_1,
+        MUX6_SEL_2,
+        MUX6_SEL_3,
+        MUX6_SEL_4,
+        MUX6_SEL_5
+        })
+  end else begin : gen_width_unsupported
+    
+    assign err_o = 1'b1;
+  end
+  
+  
+  
+  
+  `ASSERT_INIT(AesSelBufChkNum, Num inside {2, 3, 4, 6})
+endmodule
+
+module aes_shift_rows (
+  input  aes_pkg::ciph_op_e    op_i,
+  input  logic [3:0][3:0][7:0] data_i,
+  output logic [3:0][3:0][7:0] data_o
+);
+  import aes_pkg::*;
+  
+  assign data_o[0] = data_i[0];
+  
+  assign data_o[2] = aes_circ_byte_shift(data_i[2], 2'h2);
+  
+  assign data_o[1] = (op_i == CIPH_FWD) ? aes_circ_byte_shift(data_i[1], 2'h3) :
+                     (op_i == CIPH_INV) ? aes_circ_byte_shift(data_i[1], 2'h1) :
+                                          aes_circ_byte_shift(data_i[1], 2'h3);
+  
+  assign data_o[3] = (op_i == CIPH_FWD) ? aes_circ_byte_shift(data_i[3], 2'h1) :
+                     (op_i == CIPH_INV) ? aes_circ_byte_shift(data_i[3], 2'h3) :
+                                          aes_circ_byte_shift(data_i[3], 2'h1);
+endmodule
+
+module aes_sub_bytes import aes_pkg::*;
+#(
+  parameter sbox_impl_e SecSBoxImpl = SBoxImplDom
+) (
+  input  logic                              clk_i,
+  input  logic                              rst_ni,
+  input  sp2v_e                             en_i,
+  output sp2v_e                             out_req_o,
+  input  sp2v_e                             out_ack_i,
+  input  ciph_op_e                          op_i,
+  input  logic              [3:0][3:0][7:0] data_i,
+  input  logic              [3:0][3:0][7:0] mask_i,
+  input  logic [3:0][3:0][WidthPRDSBox-1:0] prd_i,
+  output logic              [3:0][3:0][7:0] data_o,
+  output logic              [3:0][3:0][7:0] mask_o,
+  output logic                              err_o
+);
+  sp2v_e           en;
+  logic            en_err;
+  logic [3:0][3:0] out_req;
+  sp2v_e           out_ack;
+  logic            out_ack_err;
+  
+  
+  
+  logic [3:0][3:0][WidthPRDSBox+19:0] in_prd;
+  logic [3:0][3:0]             [19:0] out_prd;
+  
+  
+  logic [Sp2VWidth-1:0] en_raw;
+  aes_sel_buf_chk #(
+    .Num      ( Sp2VNum   ),
+    .Width    ( Sp2VWidth ),
+    .EnSecBuf ( 1'b1      )
+  ) u_aes_sb_en_buf_chk (
+    .clk_i  ( clk_i  ),
+    .rst_ni ( rst_ni ),
+    .sel_i  ( en_i   ),
+    .sel_o  ( en_raw ),
+    .err_o  ( en_err )
+  );
+  assign en = sp2v_e'(en_raw);
+  logic [Sp2VWidth-1:0] out_ack_raw;
+  aes_sel_buf_chk #(
+    .Num      ( Sp2VNum   ),
+    .Width    ( Sp2VWidth ),
+    .EnSecBuf ( 1'b1      )
+  ) u_aes_sb_out_ack_buf_chk (
+    .clk_i  ( clk_i       ),
+    .rst_ni ( rst_ni      ),
+    .sel_i  ( out_ack_i   ),
+    .sel_o  ( out_ack_raw ),
+    .err_o  ( out_ack_err )
+  );
+  assign out_ack = sp2v_e'(out_ack_raw);
+  
+  for (genvar j = 0; j < 4; j++) begin : gen_sbox_j
+    for (genvar i = 0; i < 4; i++) begin : gen_sbox_i
+      
+      
+      
+      assign in_prd[i][j] = {out_prd[i][aes_rot_int(j,4)], prd_i[i][j]};
+      aes_sbox #(
+        .SecSBoxImpl ( SecSBoxImpl )
+      ) u_aes_sbox_ij (
+        .clk_i     ( clk_i                ),
+        .rst_ni    ( rst_ni               ),
+        .en_i      ( en == SP2V_HIGH      ),
+        .out_req_o ( out_req[i][j]        ),
+        .out_ack_i ( out_ack == SP2V_HIGH ),
+        .op_i      ( op_i                 ),
+        .data_i    ( data_i[i][j]         ),
+        .mask_i    ( mask_i[i][j]         ),
+        .prd_i     ( in_prd[i][j]         ),
+        .data_o    ( data_o[i][j]         ),
+        .mask_o    ( mask_o[i][j]         ),
+        .prd_o     ( out_prd[i][j]        )
+      );
+    end
+  end
+  
+  assign out_req_o = &out_req ? SP2V_HIGH : SP2V_LOW;
+  
+  assign err_o = en_err | out_ack_err;
+endmodule
+
+package entropy_src_pkg;
+  
+  
+  
+  parameter int  CSRNG_BUS_WIDTH = 384;
+  parameter int  FIPS_BUS_WIDTH  = 1;
+  parameter int  FIPS_CSRNG_BUS_WIDTH = FIPS_BUS_WIDTH + CSRNG_BUS_WIDTH;
+  
+  
+  
+  
+  parameter int BucketHtDataMaxWidth = 4;
+  function automatic integer bucket_ht_data_width(integer rng_bus_width);
+    return rng_bus_width >= BucketHtDataMaxWidth ? BucketHtDataMaxWidth : rng_bus_width;
+  endfunction
+  function automatic integer num_bucket_ht_inst(integer rng_bus_width);
+    return prim_util_pkg::ceil_div(rng_bus_width, bucket_ht_data_width(rng_bus_width));
+  endfunction
+  
+  typedef struct packed {
+    logic es_ack;
+    logic [CSRNG_BUS_WIDTH-1:0] es_bits;
+    logic [FIPS_BUS_WIDTH-1:0] es_fips;
+  } entropy_src_hw_if_rsp_t;
+  typedef struct packed {
+    logic es_req;
+  } entropy_src_hw_if_req_t;
+  parameter entropy_src_hw_if_req_t ENTROPY_SRC_HW_IF_REQ_DEFAULT = '{default: '0};
+  parameter entropy_src_hw_if_rsp_t ENTROPY_SRC_HW_IF_RSP_DEFAULT = '{default: '0};
+  
+  typedef struct packed {
+    logic rng_bit_en;
+    logic clear;
+    logic active;
+    logic [15:0] thresh_hi;
+    logic [15:0] thresh_lo;
+    logic window_wrap_pulse;
+    logic threshold_scope;
+  } entropy_src_xht_meta_req_t;
+  typedef struct packed {
+    logic[15:0] test_cnt_hi;
+    logic[15:0] test_cnt_lo;
+    logic continuous_test;
+    logic test_fail_hi_pulse;
+    logic test_fail_lo_pulse;
+  } entropy_src_xht_meta_rsp_t;
+  parameter entropy_src_xht_meta_req_t ENTROPY_SRC_XHT_META_REQ_DEFAULT = '{default: '0};
+  parameter entropy_src_xht_meta_rsp_t ENTROPY_SRC_XHT_META_RSP_DEFAULT =
+      '{test_cnt_lo: 16'hffff, default: '0};
+  parameter int HT_WATERMARK_NUM_WIDTH = 4;
+  typedef enum logic [HT_WATERMARK_NUM_WIDTH-1:0] {
+    REPCNT_HI  = 0,
+    REPCNTS_HI = 1,
+    ADAPTP_HI  = 2,
+    ADAPTP_LO  = 3,
+    BUCKET_HI  = 4,
+    MARKOV_HI  = 5,
+    MARKOV_LO  = 6,
+    EXTHT_HI   = 7,
+    EXTHT_LO   = 8
+  } ht_watermark_num_e;
+endpackage : entropy_src_pkg

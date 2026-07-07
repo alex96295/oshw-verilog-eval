@@ -1,0 +1,111 @@
+Design a module called TopModule. This module implements a power-domain or clock-domain isolation gate: it counts in-flight transactions and, on request, cleanly quiesces the upstream side, returning errors to new requests while allowing in-flight transactions to complete, then decouples the two sides.
+
+## Overview
+
+TopModule is an isolation controller that acts as a gate between two AXI4 domains (which might differ in power or clock domain). When isolation is requested, the module prevents new requests from being accepted upstream and returns decode errors (DECERR) for any new requests attempting to enter. Transactions already in flight are allowed to complete. Once all in-flight transactions have received their responses, the module decouples the two sides — upstream requests are blocked and master responses are suppressed. This enables safe power-down or clock-gating of the downstream domain.
+
+## Parameters
+
+| Parameter | Meaning | Constraint |
+|-----------|---------|------------|
+| `AxiIdWidth` | Width of the AXI4 ID field, in bits. | ≥ 1. |
+| `AxiAddrWidth` | Width of the AXI4 address field, in bits. | ≥ 1. |
+| `AxiDataWidth` | Width of the AXI4 data field, in bits. | ≥ 8. |
+| `aw_chan_t`, `w_chan_t`, `b_chan_t`, `ar_chan_t`, `r_chan_t` | Struct types for AXI4 channels. | User-supplied. |
+
+## Interface
+
+### Clock and Reset
+- `clk_i`: input, clock.
+- `rst_ni`: input, active-low asynchronous reset.
+
+### Control / Status Signals
+- `isolate_i`: input, logic. When asserted, begin isolation: no new requests accepted, return errors. When deasserted, resume normal operation (if quiescence is complete).
+- `quiescent_o`: output, logic. Asserted when all in-flight transactions have completed and the module is ready to be isolated. Deasserted when normal operation resumes or new transactions arrive.
+
+### Slave Port (Upstream)
+- `slv_aw_chan_i`: input, `aw_chan_t`. Address write channel.
+- `slv_aw_valid_i`: input, logic. Valid flag for address write.
+- `slv_aw_ready_o`: output, logic. Ready flag for address write.
+
+- `slv_w_chan_i`: input, `w_chan_t`. Write data channel.
+- `slv_w_valid_i`: input, logic. Valid flag for write data.
+- `slv_w_ready_o`: output, logic. Ready flag for write data.
+
+- `slv_b_chan_o`: output, `b_chan_t`. Write response channel.
+- `slv_b_valid_o`: output, logic. Valid flag for write response.
+- `slv_b_ready_i`: input, logic. Ready flag for write response.
+
+- `slv_ar_chan_i`: input, `ar_chan_t`. Address read channel.
+- `slv_ar_valid_i`: input, logic. Valid flag for address read.
+- `slv_ar_ready_o`: output, logic. Ready flag for address read.
+
+- `slv_r_chan_o`: output, `r_chan_t`. Read data channel.
+- `slv_r_valid_o`: output, logic. Valid flag for read data.
+- `slv_r_ready_i`: input, logic. Ready flag for read data.
+
+### Master Port (Downstream)
+- `mst_aw_chan_o`: output, `aw_chan_t`. Address write channel.
+- `mst_aw_valid_o`: output, logic. Valid flag for address write.
+- `mst_aw_ready_i`: input, logic. Ready flag for address write.
+
+- `mst_w_chan_o`: output, `w_chan_t`. Write data channel.
+- `mst_w_valid_o`: output, logic. Valid flag for write data.
+- `mst_w_ready_i`: input, logic. Ready flag for write data.
+
+- `mst_b_chan_i`: input, `b_chan_t`. Write response channel.
+- `mst_b_valid_i`: input, logic. Valid flag for write response.
+- `mst_b_ready_o`: output, logic. Ready flag for write response.
+
+- `mst_ar_chan_o`: output, `ar_chan_t`. Address read channel.
+- `mst_ar_valid_o`: output, logic. Valid flag for address read.
+- `mst_ar_ready_i`: input, logic. Ready flag for address read.
+
+- `mst_r_chan_i`: input, `r_chan_t`. Read data channel.
+- `mst_r_valid_i`: input, logic. Valid flag for read data.
+- `mst_r_ready_o`: output, logic. Ready flag for read data.
+
+## Behavioral Requirements
+
+- **Isolation Gate.** When `isolate_i` is asserted:
+  - No new AW or AR requests are accepted from upstream (AW/AR ready = 0).
+  - Any attempts to start a new request receive an immediate error response (B or R with resp = DECERR) instead of being forwarded downstream.
+  - In-flight requests (already forwarded to the master) are allowed to complete normally.
+
+- **Quiescence Tracking.** The module counts in-flight transactions:
+  - Increment on slave-side AW/AR handshake (valid & ready).
+  - Decrement on slave-side B/R handshake (valid & ready).
+  - `quiescent_o` is asserted when the counter reaches zero and `isolate_i` has been asserted.
+
+- **Completion of In-Flight Transactions.** While `isolate_i` is asserted and transactions are still in flight (counter > 0), the module forwards responses from the master to the upstream slave and allows them to complete. The module does not artificially block these responses.
+
+- **Isolation Complete.** Once `quiescent_o` asserts (counter = 0 while `isolate_i` = 1):
+  - Upstream is fully decoupled: no new requests or responses are accepted.
+  - Master port is quiescent (no valid signals driven).
+  - The downstream domain can be safely powered down or gated.
+
+- **Normal Operation.** When `isolate_i` is deasserted and the module is not quiescent, normal forwarding resumes: all requests and responses pass through with standard AXI4 handshaking.
+
+- **W Channel.** Write data (W channel) passes through with no isolation-specific behavior, as W is decoupled from the AW address channel; W ready/valid are propagated normally.
+
+- **Reset.** On release from reset (`rst_ni` assertion), `isolate_i` is assumed low, all in-flight counters are cleared, and `quiescent_o` is deasserted.
+
+## Throughput and Latency
+
+- **Normal Operation:** Throughput is limited only by downstream readiness. Latency is minimal (combinational routing).
+- **Isolation:** Latency to reach quiescence depends on in-flight transaction lifetimes. No artificial delays are introduced.
+
+## Clock and Reset Domains
+
+- All ports operate in the same `clk_i` domain (or across clock-domain boundaries with appropriate synchronization for `isolate_i` if needed, not shown here).
+- Reset is asynchronous (`rst_ni`, active low).
+
+## Example Behavior
+
+1. Normal operation: `isolate_i = 0`. AW request with id=0 at time T0 is forwarded, counter=1.
+2. At T1, `isolate_i` asserted. No new AW/AR requests accepted (ready=0).
+3. At T5, B response for id=0 arrives. Response forwarded to slave, counter=0.
+4. `quiescent_o` asserts, signaling that the module is isolated and can be powered down.
+5. `isolate_i` deasserted at T10. Normal operation resumes.
+
+Any new requests arriving while `isolate_i` = 1 receive immediate DECERR responses without being forwarded downstream.

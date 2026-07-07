@@ -1,0 +1,105 @@
+package:
+  name: opentitan
+
+# ---------------------------------------------------------------------------------------
+# OpenTitan is vendored (not a submodule): it ships no Bender.yml, we need only a small
+# curated subset, and we must patch a few OT-internal / tool-specific issues at the source.
+# `bender vendor init` copies the include_from_upstream globs into target_dir and applies
+# any patches in patch_dir.  See bender's own docs: the vendor flow is modeled on
+# OpenTitan's util/vendor.py and its canonical example vendors lowRISC/opentitan.
+#
+# The vendored subset lives under vendor/ (committed); re-run `bender vendor init` to refresh
+# from upstream and re-apply patches from patch_dir.
+# ---------------------------------------------------------------------------------------
+vendor_package:
+  - name: opentitan
+    target_dir: vendor
+    upstream:
+      git: "https://github.com/lowRISC/opentitan.git"
+      rev: "0e745b4491170b1bf76a14f9c73bea680744e599"
+    patch_dir: patches
+    include_from_upstream:
+      - "hw/ip/prim/rtl/*.sv"
+      - "hw/ip/prim/rtl/*.svh"
+      - "hw/ip/prim/fpv/tb/*.sv"
+      - "hw/ip/prim/fpv/vip/*.sv"
+      - "hw/ip/tlul/rtl/*.sv"
+      - "hw/ip/pattgen/rtl/*.sv"
+      - "hw/ip/rv_timer/rtl/*.sv"
+      - "hw/ip/aon_timer/rtl/*.sv"
+      - "hw/ip/sram_ctrl/rtl/*.sv"
+      - "hw/ip/rram_macro/rtl/*.sv"
+      - "hw/ip/soc_dbg_ctrl/rtl/*.sv"
+      - "hw/ip/otp_macro/rtl/*.sv"
+      - "hw/ip/uart/rtl/*.sv"
+      - "hw/ip/rom_ctrl/rtl/*.sv"
+      - "hw/ip/edn/rtl/*.sv"
+      - "hw/ip/mbx/rtl/*.sv"
+      - "hw/ip/spi_host/rtl/*.sv"
+      - "hw/ip/csrng/rtl/*.sv"
+      - "hw/ip/lc_ctrl/rtl/*.sv"
+      - "hw/ip/adc_ctrl/rtl/*.sv"
+      - "hw/ip/keymgr_dpe/rtl/*.sv"
+      - "hw/ip/keymgr/rtl/*.sv"
+      - "hw/ip/dma/rtl/*.sv"
+      - "hw/ip/ascon/rtl/*.sv"
+      - "hw/ip/aes/rtl/*.sv"
+      - "hw/ip/hmac/rtl/*.sv"
+      - "hw/ip/kmac/rtl/*.sv"
+      - "hw/ip/otp_ctrl/rtl/*.sv"
+      - "hw/ip/entropy_src/rtl/*.sv"
+      - "hw/top_earlgrey/rtl/top_pkg.sv"
+      - "hw/top_earlgrey/rtl/autogen/top_racl_pkg.sv"
+
+# prim_assert.sv / prim_flop_macros and friends are `include'd across the tree; expose the
+# prim/rtl dir so the preprocessor finds them.
+export_include_dirs:
+  - vendor/hw/ip/prim/rtl
+
+# Slang (behind `bender pickle`) is a full elaborator: it parses the whole source set and
+# resolves package/module dependencies regardless of file order, and `--top` trims each
+# pickle to only the reachable modules. So we can list broad per-area globs and let
+# reachability do the curation — unused files are never emitted.
+sources:
+  # shared cross-IP packages first (belt-and-suspenders for order-sensitive consumers)
+  - target: rtl
+    files:
+      - vendor/hw/top_earlgrey/rtl/top_pkg.sv
+      - vendor/hw/top_earlgrey/rtl/autogen/top_racl_pkg.sv
+
+  # prim primitives + tlul bus + all curated peripheral / crypto IPs
+  - target: rtl
+    files:
+      - vendor/hw/ip/prim/rtl/*.sv
+      - vendor/hw/ip/tlul/rtl/*.sv
+      - vendor/hw/ip/pattgen/rtl/*.sv
+      - vendor/hw/ip/rv_timer/rtl/*.sv
+      - vendor/hw/ip/aon_timer/rtl/*.sv
+      - vendor/hw/ip/sram_ctrl/rtl/*.sv
+      - vendor/hw/ip/rram_macro/rtl/*.sv
+      - vendor/hw/ip/soc_dbg_ctrl/rtl/*.sv
+      - vendor/hw/ip/otp_macro/rtl/*.sv
+      - vendor/hw/ip/uart/rtl/*.sv
+      - vendor/hw/ip/rom_ctrl/rtl/*.sv
+      - vendor/hw/ip/edn/rtl/*.sv
+      - vendor/hw/ip/mbx/rtl/*.sv
+      - vendor/hw/ip/spi_host/rtl/*.sv
+      - vendor/hw/ip/csrng/rtl/*.sv
+      - vendor/hw/ip/lc_ctrl/rtl/*.sv
+      - vendor/hw/ip/adc_ctrl/rtl/*.sv
+      - vendor/hw/ip/keymgr_dpe/rtl/*.sv
+      - vendor/hw/ip/keymgr/rtl/*.sv
+      - vendor/hw/ip/dma/rtl/*.sv
+      - vendor/hw/ip/ascon/rtl/*.sv
+      - vendor/hw/ip/aes/rtl/*.sv
+      - vendor/hw/ip/hmac/rtl/*.sv
+      - vendor/hw/ip/kmac/rtl/*.sv
+      - vendor/hw/ip/otp_ctrl/rtl/*.sv
+      - vendor/hw/ip/entropy_src/rtl/*.sv
+
+  # FPV testbenches (harness + assert VIP + bind), used only for golden/_test pickles.
+  # vip/assert modules must precede the bind files that reference them.
+  - target: test
+    files:
+      - vendor/hw/ip/prim/fpv/vip/*.sv
+      - vendor/hw/ip/prim/fpv/tb/*.sv

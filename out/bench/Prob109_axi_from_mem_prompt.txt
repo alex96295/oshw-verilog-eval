@@ -1,0 +1,128 @@
+Design a module called TopModule. This module adapts a simple memory-style request/response interface
+(asynchronous reads and writes with implicit request-response pairing) into AXI4 master transactions.
+It provides a bridge for simple memory controllers or test benches to issue AXI4 traffic.
+
+Overview
+
+TopModule presents a simple synchronous request-response interface on the slave side (independent read
+and write request inputs, corresponding data/valid outputs) and translates these into valid AXI4 master
+transactions on the downstream side. The memory-style interface has two independent request types: a write
+request (address, data, write-enable) and a read request (address), each with corresponding responses
+(write-done, read-data). TopModule converts these into proper AXI4 write (AW, W, B) and read (AR, R)
+channels with full handshaking and configurable AXI parameters (ID, size, length, burst type, etc.).
+
+Parameters
+
+  Parameter   Meaning  
+ ----------- --------- 
+  aw_chan_t   Struct type for the AXI write-address channel.  
+  w_chan_t   Struct type for the AXI write-data channel.  
+  b_chan_t   Struct type for the AXI write-response channel.  
+  ar_chan_t   Struct type for the AXI read-address channel.  
+  r_chan_t   Struct type for the AXI read-data channel.  
+  axi_req_t   Struct type defining the complete AXI request.  
+  axi_resp_t   Struct type defining the complete AXI response.  
+  AxiIdWidth   Width of the AXI ID field.  
+  AxiAddrWidth   Width of the AXI address bus.  
+  AxiDataWidth   Width of the AXI data bus.  
+  MemAddrWidth   Width of the memory-style interface address. Typically ≤ AxiAddrWidth.  
+  MemDataWidth   Width of the memory-style interface data. Typically ≤ AxiDataWidth.  
+
+Interface
+
+Memory-style slave interface
+
+  Port   Direction   Width   Description  
+ ------ ----------- ------- ------------- 
+  clk_i   input   1   Clock signal.  
+  rst_ni   input   1   Asynchronous active-low reset.  
+  mem_req_write_i   input   1   Write request valid. When asserted, mem_addr_write_i and mem_data_write_i are sampled.  
+  mem_addr_write_i   input   MemAddrWidth   Write address. Translated into AXI AW.  
+  mem_data_write_i   input   MemDataWidth   Write data. Translated into AXI W.  
+  mem_we_i   input   MemDataWidth/8   Write-enable (byte-granular). Determines strb in AXI W channel.  
+  mem_req_read_i   input   1   Read request valid. When asserted, mem_addr_read_i is sampled.  
+  mem_addr_read_i   input   MemAddrWidth   Read address. Translated into AXI AR.  
+  mem_rvalid_o   output   1   Read data valid. Asserted when R response is received and available.  
+  mem_rdata_o   output   MemDataWidth   Read data from the AXI R response.  
+  mem_wready_o   output   1   Write ready. Asserted when the module is ready to accept a new write request.  
+
+AXI4 master interface
+
+  Port   Direction   Type   Description  
+ ------ ----------- ------ ------------- 
+  mst_req_o   output   axi_req_t   AXI4 request to the downstream master (AW, W, AR channels with valid signals).  
+  mst_resp_i   input   axi_resp_t   AXI4 response from the master (B, R channels with valid signals).  
+
+Behavioral requirements
+
+- Write request handling. When mem_req_write_i is asserted:
+  - The address is captured as the AXI write-address (AW) request.
+  - The data and write-enable are captured as the AXI write-data (W) request.
+  - Both AW and W are issued to the AXI master with valid signals asserted.
+  - The module waits for both AW and W handshakes to complete (valid & ready on both channels).
+  - Once both handshakes complete, the module is ready for the next write request.
+  - mem_wready_o is asserted when the module can accept a new write request (not waiting for AW/W
+    handshakes).
+
+- Write-response handling. When the AXI B (write-response) channel asserts valid:
+  - The response is acknowledged (implied via internal handling).
+  - If the response indicates an error, the behavior is implementation-defined (typically, the
+    error is recorded but the module continues accepting new write requests).
+
+- Read request handling. When mem_req_read_i is asserted:
+  - The address is captured as the AXI read-address (AR) request.
+  - AR is issued to the AXI master with valid signal asserted.
+  - The module waits for the AR handshake to complete.
+  - mem_rvalid_o is deasserted while waiting for the R response.
+
+- Read-response handling. When the AXI R (read-data) channel asserts valid:
+  - The read data is captured.
+  - mem_rdata_o is updated with the data.
+  - mem_rvalid_o is asserted to indicate valid read data is available.
+  - The module is ready to accept the next read request.
+
+- AXI parameter configuration. The module issues AXI transactions with:
+  - ID: A fixed ID (or ID field from request, if supported). Typically ID=0 or incrementing per transaction.
+  - Size: Derived from the memory data width. Example: 32-bit data → size = 2 (4 bytes).
+  - Length: Always 0 (single-beat transactions).
+  - Burst: INCR (incrementing; for single beats, this has no effect).
+  - Lock, Cache, Prot, etc.: Typically set to default values.
+
+- Byte-enable mapping. The mem_we_i byte-enable is directly mapped to the AXI W strb (write-strobe)
+  field.
+
+- Address translation. If MemAddrWidth < AxiAddrWidth, the memory address is zero-extended to the AXI
+  address width.
+
+- Data width handling. If MemDataWidth < AxiDataWidth, the memory data is aligned (typically to the LSBs)
+  and padded with zeros. If MemDataWidth > AxiDataWidth (unlikely but possible), the conversion is
+  implementation-specific (may require multi-beat AXI transactions).
+
+- Concurrent requests. The module may support independent read and write requests issued in parallel
+  (e.g., a write request on cycle N and a read request on cycle N+1, both in-flight). The exact concurrency
+  limit is implementation-defined (often limited by AXI ID space or internal buffering).
+
+- Reset behavior. On rst_ni assertion, all pending transactions are cancelled, and the module resets
+  to accept new requests.
+
+Clock and reset domains
+
+- Single clock domain: clk_i and rst_ni.
+
+Example behavior
+
+1. Single write. Cycle 0: mem_req_write_i=1, mem_addr_write_i=0x1000, mem_data_write_i=0xDEADBEEF,
+   mem_we_i=8'hFF.
+   - Module issues AW (addr=0x1000) and W (data=0xDEADBEEF, strb=8'hFF) to AXI master.
+   - Assume master is ready; handshakes complete on the same cycle.
+   - mem_wready_o=0 (module waiting for B response).
+   - Cycle 1: AXI master returns B with resp=OKAY.
+   - mem_wready_o=1 (ready for next write).
+
+2. Pipelined read and write. Cycle 0: mem_req_read_i=1, mem_addr_read_i=0x2000.
+   - Module issues AR (addr=0x2000) to AXI master.
+   - Cycle 0 (same): mem_req_write_i=1, mem_addr_write_i=0x3000, mem_data_write_i=0xCAFE, mem_we_i=8'h0F.
+   - Module issues AW and W in parallel with AR (if implementation supports concurrent IDs).
+   - Cycle 1: Master returns R (data=0xABCD1234) and B (resp=OKAY).
+   - mem_rvalid_o=1, mem_rdata_o=0xABCD1234.
+   - mem_wready_o=1.

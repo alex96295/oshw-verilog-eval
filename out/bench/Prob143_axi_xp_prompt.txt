@@ -1,0 +1,52 @@
+Design a module called TopModule. This module is an AXI4 crosspoint (xp)—a simple N-to-M crossbar with per-connection configuration, simpler than a full crossbar but more flexible than a simple mux.
+
+Overview
+
+TopModule is an AXI4 crosspoint. It is a simplified crossbar variant that supports N AXI4 master ports and M AXI4 slave ports with full address-based routing. The key difference from a full crossbar is configurable per-connection behavior: each (master, slave) connection can have independent configuration such as maximum outstanding transactions, latency mode, or buffer depth. This allows fine-grained tuning of individual data paths while reducing complexity compared to a monolithic crossbar.
+
+Parameters
+
+  Parameter   Meaning  
+ ----------- --------- 
+  ATOPs   Enable atomic operation support.  
+  Cfg   xbar_cfg_t struct with overall configuration.  
+  NumSlvPorts   Number of AXI4 master ports (N).  
+  NumMstPorts   Number of AXI4 slave ports (M).  
+  Connectivity   Bit matrix [NumSlvPorts-1:0][NumMstPorts-1:0]: connectivity per (master, slave).  
+  AxiAddrWidth, AxiDataWidth, AxiIdWidth, AxiUserWidth   Bus widths.  
+  Per-connection config   Latency, max trans, buffers, etc. (implementation-dependent).  
+
+Interface
+
+  Port   Direction   Type   Description  
+ ------ ----------- ------ ------------- 
+  clk_i   input   -   Clock.  
+  rst_ni   input   -   Active-low reset.  
+  slv_req_i[NumSlvPorts-1:0]   input array   axi_req_t   AXI4 requests from masters.  
+  slv_resp_o[NumSlvPorts-1:0]   output array   axi_resp_t   AXI4 responses to masters.  
+  mst_req_o[NumMstPorts-1:0]   output array   axi_req_t   AXI4 requests to slaves.  
+  mst_resp_i[NumMstPorts-1:0]   input array   axi_resp_t   AXI4 responses from slaves.  
+
+Behavioral requirements
+
+- Address routing. Each master's AW and AR are examined; address is matched against address rules to route to the appropriate slave(s).
+- Per-connection configuration. Each enabled (master, slave) pair may have independent latency, buffering, or transaction limits. These are configured via parameters or compile-time settings (not run-time configurable in this variant).
+- ID remapping. Transaction IDs are remapped per connection to avoid collisions, similar to a full crossbar.
+- Request arbitration. When multiple masters target the same slave, arbitration selects which master(s) can proceed. Round-robin or fixed priority is typically used.
+- Response routing. Responses from slaves are demultiplexed back to the correct master based on remapped ID and connection state.
+- Simplified control. Compared to a full crossbar, the crosspoint may have reduced configurability at run-time but is easier to instantiate and verify.
+- Connectivity enforcement. If Connectivity[s][m] = 0, the (master m, slave s) path is inactive or disabled.
+- Reset behavior. On reset, all state is cleared.
+
+Throughput and latency
+
+- Latency. Depends on per-connection configuration; typically 0-4 cycles.
+- Throughput. Limited by per-connection and per-slave bandwidth.
+
+Clock and reset domains
+
+Single clock domain.
+
+Example behavior
+
+With 3 masters and 2 slaves, and Connectivity allowing all masters to reach both slaves, a master sends AW to address 0x2000 (routed to slave 1) with ID=7. The crosspoint remaps the ID per the (master, slave) connection state and forwards to slave 1. When slave 1 responds with a B, the response is demultiplexed to the originating master with ID=7 restored.

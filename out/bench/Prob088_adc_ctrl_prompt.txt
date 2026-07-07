@@ -1,0 +1,164 @@
+Design a module called TopModule. This module is an ADC (Analog-to-Digital Converter) Controller that sequences an external analog-to-digital converter, samples multiple channels, applies digital filtering and threshold comparison, and signals interrupts or wake-up events on configurable filter match conditions.
+
+Overview
+
+TopModule acts as a peripheral controller for an off-chip ADC (or ADC macro), managing the sampling sequence, reading ADC results, applying post-processing (filtering, comparison), and reporting results via interrupts or wakeup requests. The module provides a TL-UL register interface for configuration (channel selection, filter thresholds, enable), status (current readings, interrupt flags), and operates in two clock domains to support low-power wake-up functionality.
+
+Parameters
+
+  Parameter   Meaning  
+ ----------- --------- 
+  AlertAsyncOn   Per-alert async/sync mode.  
+  AlertSkewCycles   Alert propagation delay.  
+
+(The reference implementation may have additional hidden parameters for filter structure, number of channels, etc.)
+
+Interface
+
+Clocks & Resets
+- clk_i, rst_ni: Main clock and active-low reset (for registers and logic).
+- clk_aon_i, rst_aon_ni: Always-on clock and reset (independent, typically lower frequency for low-power operation).
+
+The ADC sampling and filtering may operate in either domain; typical design uses clk_aon_i for low-power filtering and clk_i for TL-UL register access.
+
+TL-UL Register Bus
+- tl_i (input): TL-UL host-to-device request (32-bit address, 32-bit data, write enable).
+- tl_o (output): TL-UL device-to-host response (32-bit read data, valid, error).
+
+Registers control ADC sampling, filter configuration, and status readback.
+
+ADC I/O Ports
+- adc_o (output): ADC request (channel select, start signal, etc.).
+- adc_i (input): ADC response (ADC data, valid signal, status).
+
+Handshake protocol: TopModule asserts adc_o.adc_pd (power-down request), selects a channel via adc_o.adc_chnl_sel[3:0], and strobes adc_o.adc_en to start conversion. ADC responds with adc_i.adc_data_valid and adc_i.adc_data[9:0] (10-bit typical ADC reading).
+
+Interrupts
+- intr_match_pending_o (output, 1-bit): Asserted when a filter match condition is met (threshold crossing, or configured event).
+
+Wakeup
+- wkup_req_o (output, 1-bit): Asserted to wake the system from low-power state.
+
+Either interrupt or wakeup (or both) can be configured per filter/channel.
+
+Alerts
+- alert_tx_o[NumAlerts-1:0] (output): Alert transmit (differential).
+- alert_rx_i[NumAlerts-1:0] (input): Alert acknowledge/ping.
+
+Fatal alert on register integrity error.
+
+Control & Status Registers
+
+- ADC_EN: Enable ADC sampling (continuous or one-shot).
+- ADC_CH_EN[i] (per channel): Enable/disable sampling of channel i.
+- FILTER_CTRL: Filter mode selection (e.g., moving average, single-sample, disabled).
+- FILTER_THRESH_HI / FILTER_THRESH_LO: Upper and lower thresholds for filter output comparison.
+- FILTER_STATUS: Current filter state (last filtered reading, match flag).
+- ADC_CHNL_VAL[i] (per channel): Raw ADC reading for channel i (read-only after conversion).
+- ADC_FSM_STATE: Current sequencer state (read-only; for debug).
+- ADC_INTR_STATUS / ADC_INTR_ENABLE / ADC_INTR_TEST: Interrupt control and status.
+- ALERT_TEST: Test-inject alerts.
+
+Behavioral Requirements
+
+ADC Sampling Sequence
+- TopModule implements a state machine that cycles through enabled channels in order.
+- For each enabled channel, it strobes the ADC start signal, waits for ADC data valid, and captures the 10-bit result.
+- Results are stored in per-channel result registers.
+
+Filtering & Threshold Comparison
+- Optionally applies a digital filter (e.g., moving average over N samples) to the raw ADC reading.
+- After filtering, compares the filtered value against programmable thresholds (HI and LO).
+- Threshold match can be:
+  - Rising: Filtered value crosses above LO threshold.
+  - Falling: Filtered value crosses below HI threshold.
+  - In-window: Filtered value is between LO and HI.
+  - Out-of-window: Filtered value is outside [LO, HI].
+  - Single-sample: No filtering; raw ADC reading is compared.
+
+Interrupt & Wakeup Signaling
+- When a configured threshold condition is met, TopModule asserts intr_match_pending_o (if interrupt is enabled for that filter).
+- Optionally asserts wkup_req_o (if wakeup is enabled for that filter).
+- Interrupt remains asserted until software clears it via an interrupt status register write.
+
+Filter Configuration
+- FILTER_CTRL register selects the filter type:
+  - Disabled: No filtering; raw ADC reading is used for comparison.
+  - Moving Average: Applies an N-tap FIR average to smooth readings.
+  - Single-Sample: Compares each new ADC reading independently.
+  - Other variants (median, IIR, etc.) may be supported.
+
+- Number of Samples: If moving average, the filter window size (e.g., 4, 8, 16 samples) is programmable.
+
+Channel Enable & Sequencing
+- Software configures which channels to sample via ADC_CH_EN[i] bits.
+- TopModule sequences through all enabled channels in order, reading each and applying filters.
+- Results are stored in ADC_CHNL_VAL[i] registers; oldest readings are overwritten as new data arrives.
+
+Timing & Throughput
+- Each ADC conversion (per channel) takes a fixed latency (e.g., 10-20 cycles), as determined by the ADC response time.
+- TopModule polls for ADC data valid (adc_i.adc_data_valid); when valid, captures the result and moves to the next enabled channel.
+- Overall sampling rate depends on the number of enabled channels and the per-channel conversion time.
+
+Power Management
+- adc_o.adc_pd (power-down flag) allows TopModule to disable the ADC when not sampling (low-power mode).
+- Typical behavior: ADC is powered down between sampling windows; TopModule powers it up, samples, then powers it down again.
+- Transition from powered-down to powered-up incurs a startup latency (e.g., 10 cycles).
+
+Multi-Clock Domain Synchronization
+- ADC sampling and filtering may run in clk_aon_i domain.
+- Register access (including reading ADC results) is in clk_i domain.
+- Synchronization is required: ADC results are double-buffered or CDC-synchronized before TL-UL read.
+- Interrupt intr_match_pending_o must be synchronized from clk_aon_i to clk_i domain.
+
+Reset Behavior
+- On reset (rst_ni or rst_aon_ni depending on domain), all filter state, counters, and pending interrupts are cleared.
+- ADC is powered down.
+- All configuration registers retain their values (or reset to defaults, per design).
+
+Error & Exception Handling
+- ADC Timeout: If ADC does not respond with valid data within a timeout, TopModule may assert an alert and skip that channel.
+- Register Integrity Error: If register read/write detects a parity or ECC error, fatal alert is asserted.
+- FSM Corruption: If the sequencer state machine enters an undefined state, fatal alert is asserted.
+
+Configuration Examples
+
+Example 1: Single Channel, Simple Threshold
+- Enable channel 0 only (ADC_CH_EN[0] = 1, others disabled).
+- Disable filter (FILTER_CTRL = DISABLED).
+- Set FILTER_THRESH_HI = 512, FILTER_THRESH_LO = 256.
+- Enable interrupt on out-of-window (INTR_EN = 1).
+- TopModule repeatedly samples channel 0; when raw ADC reading < 256 or > 512, asserts interrupt.
+
+Example 2: Multi-Channel with Moving Average
+- Enable channels 0, 2, 4 (ADC_CH_EN[0,2,4] = 1).
+- Select moving average filter with 8-tap window (FILTER_CTRL = MOVING_AVG_8).
+- Set FILTER_THRESH_HI = 700, FILTER_THRESH_LO = 300.
+- Enable wakeup on in-window match.
+- TopModule samples channels in sequence (0, 2, 4, repeat); for each channel, maintains a sliding 8-sample window, computes average, and checks if average is in [300, 700].
+- If yes for any channel, asserts wkup_req_o to wake the system.
+
+Boundary Parameters & Constraints
+- ADC Resolution: Typically 10 bits (0-1023 range).
+- Number of Channels: Implementation-dependent; often 8-16 channels.
+- Filter Window Size: If moving average, typical sizes are 4, 8, 16, 32 samples.
+- Sampling Rate: Limited by ADC conversion time; typical 10 kHz to 1 MHz depending on configuration.
+- Threshold Precision: Thresholds are typically full ADC resolution (10 bits for 10-bit ADC).
+
+Synchronization & Timing
+- Rising/Falling Detection: Requires at least two consecutive samples to detect a threshold crossing; hysteresis is built in.
+- Filter Settling: Moving average filter requires N samples to stabilize; first match is reported only after filter is populated.
+- Wakeup Latency: From filter match detection in clk_aon_i to wkup_req_o assertion in clk_i domain, typically 2-4 cycles (CDC delay).
+
+Example Scenario
+
+1. Software enables channels 0 and 1 via ADC_CH_EN[0,1].
+2. Software sets FILTER_CTRL = MOVING_AVG_8 and FILTER_THRESH_HI = 700, FILTER_THRESH_LO = 300.
+3. Software sets INTR_MATCH_EN = 1 and WAKEUP_EN = 1 to enable both interrupt and wakeup on threshold match.
+4. TopModule powers on ADC and begins sampling channel 0.
+5. After each ADC conversion (e.g., 20 cycles), TopModule captures the 10-bit result and feeds it to the moving average filter.
+6. After 8 samples are accumulated, the filter output is stable.
+7. TopModule compares filter output against [300, 700]; if out of range, asserts both intr_match_pending_o and wkup_req_o.
+8. Software reads ADC_CHNL_VAL[0] to get the raw reading; FILTER_STATUS to inspect filter state.
+9. Software clears the interrupt by writing to ADC_INTR_STATUS.match_pending = 1 (write-to-clear).
+10. Wakeup request is handled by power manager; system wakes if in low-power state.

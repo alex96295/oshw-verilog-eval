@@ -1,0 +1,82 @@
+Design a module called TopModule. This module is an alert receiver that accepts alert transmissions from a remote alert sender and manages initialization, ping-pong handshakes, and alert integrity monitoring.
+
+Overview
+
+TopModule is the receive side of a dual-rail differential alert signaling link. It monitors incoming differential alert signals from a remote sender, manages bidirectional ping/ack exchanges to verify link integrity, and detects both active alerts and signal integrity violations. The module supports configurable asynchronous/synchronous modes and multi-stage initialization.
+
+Parameters
+
+  Parameter   Meaning   Default  
+ ----------- --------- --------- 
+  AsyncOn   When 1, use asynchronous differential decoding; when 0, use synchronous decoding.   0  
+  SkewCycles   Number of cycles allowed for skew tolerance in differential decoding.   1  
+
+Interface
+
+  Port   Direction   Width   Description  
+ ------ ----------- ------- ------------- 
+  clk_i   input   1   System clock.  
+  rst_ni   input   1   Asynchronous active-low reset.  
+  init_trig_i   input   mubi4_t   Multi-bit input for initialization trigger (redundancy encoded).  
+  ping_req_i   input   1   Request to initiate a ping test (handshake test with sender).  
+  ping_ok_o   output   1   Ping handshake successful: asserted after ping test completes.  
+  integ_fail_o   output   1   Signal integrity failure: asserted when differential encoding errors are detected.  
+  alert_o   output   1   Alert output: high when an alert has been received from the sender.  
+  alert_rx_o   output   alert_rx_t   Differential feedback to sender: contains ping_p/ping_n and ack_p/ack_n.  
+  alert_tx_i   input   alert_tx_t   Differential alert input from sender: contains alert_p and alert_n.  
+
+Where:
+- alert_tx_t.alert_p / alert_tx_t.alert_n — differential alert pair from remote sender.
+- alert_rx_t.ping_p / alert_rx_t.ping_n — differential ping feedback (sent by receiver).
+- alert_rx_t.ack_p / alert_rx_t.ack_n — differential acknowledgment pair (sent by receiver).
+
+Behavioral requirements
+
+Initialization
+- The module begins in an initialization state after reset.
+- init_trig_i (multi-bit encoded) triggers the initialization sequence, which verifies the alert link is ready.
+- During initialization, the receiver establishes communication with the sender through a handshake.
+
+Alert Reception
+- The module continuously monitors the incoming differential alert pair (alert_p, alert_n).
+- When a valid alert is detected (differential encoding valid), alert_o is asserted.
+- Once an alert is detected, it remains latched until explicitly cleared or acknowledged.
+
+Ping-Pong Handshake
+- When ping_req_i is asserted, the module initiates a ping test by driving differential ping signals (ping_p/ping_n).
+- The sender is expected to detect the ping and respond.
+- After the handshake completes, ping_ok_o is asserted, indicating the link is responsive.
+- This mechanism verifies bidirectional link integrity.
+
+Acknowledgment Transmission
+- After detecting an alert, the receiver transmits an acknowledgment (ack_p/ping_n pair).
+- The sender decodes this ack and asserts its own alert_ack_o.
+- This creates a two-way confirmation flow.
+
+Signal Integrity Monitoring
+- The module continuously checks that the incoming differential pairs are valid (no illegal states like both high or both low for a sustained period).
+- If a signal integrity error is detected (e.g., simultaneous high or low on both rails), integ_fail_o is asserted.
+- This flag remains asserted as long as the error condition persists.
+
+Differential Decoding
+- Incoming alert signals are decoded from differential form (alert_p/alert_n).
+- Depending on AsyncOn, the decoding is either asynchronous (faster, uses AsyncOn mode in the diff_decode module) or synchronous (more conservative, pipeline-based).
+- SkewCycles defines tolerance for arrival skew between the two rails.
+
+Reset
+- On rst_ni assertion (active low), all internal state is reset, and the module re-enters the initialization phase.
+
+Example
+
+Typical initialization and alert flow:
+
+  Cycle   init_trig_i   alert_tx_i (alert_p, alert_n)   alert_o   integ_fail_o   ping_req_i   ping_ok_o   Notes  
+ ------- --- --- --- --- --- --- --- 
+  0–5   init   (0,0)   0   0   0   0   Initialization sequence in progress  
+  6   init_done   (0,0)   0   0   0   1   Initialization complete  
+  7   —   (1,0)   1   0   0   —   Alert received from sender  
+  8   —   (1,0)   1   0   1   0   Ping test requested  
+  9–10   —   (1,0)   1   0   —   —   Ping in progress  
+  11   —   (1,0)   1   0   —   1   Ping complete, link verified  
+
+The actual latency and timing depend on AsyncOn and SkewCycles settings.

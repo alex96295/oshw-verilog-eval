@@ -1,0 +1,47 @@
+Design a module called TopModule. This module is an AXI4 slave that reads as zero and sinks all writes, similar to a /dev/zero device. It is useful for testing and as a dummy endpoint.
+
+Overview
+
+TopModule is an AXI4 /dev/zero memory. It accepts AXI4 transactions on a slave port and responds as if connected to a memory that always returns zero on reads and silently discards all writes. Writes are accepted (W channel handshakes normally) and write responses (B) are generated after the appropriate latency. Reads are accepted (AR channel handshakes) and read data responses (R) are generated with data field set to zero, with appropriate last signal handling for bursts. This is useful for testing interconnect logic, verifying handshaking, or as a placeholder in simulations.
+
+Parameters
+
+  Parameter   Meaning  
+ ----------- --------- 
+  axi_req_t, axi_resp_t   AXI4 struct types.  
+  AddrWidth, DataWidth, IdWidth   Bit widths.  
+  NumBanks   Number of memory banks (typically 1; higher values may implement parallel read/write or pipelining).  
+  BufDepth   Internal buffer depth for request queuing.  
+
+Interface
+
+  Port   Direction   Type   Description  
+ ------ ----------- ------ ------------- 
+  clk_i   input   -   Clock.  
+  rst_ni   input   -   Active-low reset.  
+  slv_req_i   input   axi_req_t   AXI4 request from master: AW/W/AR channels.  
+  slv_resp_o   output   axi_resp_t   AXI4 response to master: B with all-zeros status, R with zero data.  
+
+Behavioral requirements
+
+- Write acceptance. When slv_req_i.aw_valid is asserted, the write address is accepted and slv_resp_o.aw_ready is asserted (subject to internal buffering). Similarly, write data (slv_req_i.w_valid) is accepted and slv_resp_o.w_ready is asserted.
+- Write response generation. Once a write address and its associated write data have been accepted, a write response (B) is generated after a programmable delay (typically 1-2 cycles). The B response carries the original transaction ID and a response code (OKAY, typically).
+- Read acceptance. When slv_req_i.ar_valid is asserted, the read address is accepted and slv_resp_o.ar_ready is asserted.
+- Read response generation. For each read beat, an R response is generated with data field set to all zeros. For a burst with length N, N R beats are generated, with the last R beat having last=1. The response code is OKAY.
+- ID preservation. Transaction IDs are carried through from request to response unchanged.
+- Burst handling. Bursts are handled normally: the module accepts the address, computes beat counts based on the length field, and generates the appropriate number of response beats.
+- Backpressure. Ready signals are asserted whenever the internal buffer has space; if the buffer fills, ready is deasserted.
+- Reset behavior. On reset, all pending requests and responses are cleared.
+
+Throughput and latency
+
+- Latency. 1-2 cycles from request to response (implementation-dependent).
+- Throughput. Up to one request per cycle, limited by internal buffering.
+
+Clock and reset domains
+
+Single clock domain.
+
+Example behavior
+
+A master sends AR with ID=2, address=0x5000, length=3 (4 beats). The module immediately accepts the request. After a few cycles, it begins generating R responses: R beat 0 with data=0x0, beat 1 with data=0x0, beat 2 with data=0x0, beat 3 with data=0x0 and last=1, all with ID=2 and response=OKAY. Simultaneously, a write request AW+W is accepted and a B response is generated.

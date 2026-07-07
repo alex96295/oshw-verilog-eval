@@ -1,0 +1,76 @@
+Design a module called TopModule. This module is a SoC debug control policy register block: it
+manages debug access policy from multiple masters (core CPU, JTAG), enforces lifecycle and role-based
+gating, and distributes policy signals to downstream debug endpoints.
+
+Overview
+
+TopModule is a debug control and policy arbiter for a System-on-Chip. It exposes two independent
+TileLink register interfaces: one for core CPU access and one for JTAG access. The module decodes
+register writes to manage debug policy settings and gates debug access based on lifecycle state
+and role-based access control (RACL). It broadcasts the active debug policy to all endpoints via
+soc_dbg_policy_bus_o. The module supports lifecycle escalation for emergency debug lock, has
+shadowed registers for protection against fault injection, and raises alerts for detected
+violations. Lifecycle signals control which debug features are available.
+
+Parameters
+
+  Parameter   Meaning   Constraint  
+ ----------- --------- ------------ 
+  AlertAsyncOn   Alert asynchronous enable mask.   Width NumAlerts; each bit selects async (1) or sync (0).  
+  AlertSkewCycles   Clock cycles of alert timing skew.   Typically 1.  
+
+Interface
+
+  Port   Direction   Width   Description  
+ ------ ----------- ------- ------------- 
+  clk_i   input   1   System clock.  
+  rst_ni   input   1   Active-low asynchronous reset.  
+  rst_shadowed_ni   input   1   Active-low reset for shadowed registers; may be asserted independently to test shadow logic.  
+  alert_rx_i   input   alert_rx_t[NumAlerts-1:0]   Alert RX array for ping/ack protocol.  
+  alert_tx_o   output   alert_tx_t[NumAlerts-1:0]   Alert TX array for alert assertion.  
+  core_tl_i   input   tlul_h2d_t   TileLink host-to-device from core CPU.  
+  core_tl_o   output   tlul_d2h_t   TileLink device-to-host to core CPU.  
+  jtag_tl_i   input   tlul_h2d_t   TileLink host-to-device from JTAG controller.  
+  jtag_tl_o   output   tlul_d2h_t   TileLink device-to-host to JTAG controller.  
+  soc_dbg_policy_bus_o   output   soc_dbg_policy_t   Debug policy broadcast bus; signals debug access policy to all debug endpoints (CPUs, JTAG, trace, etc.).  
+  soc_dbg_state_i   input   lc_ctrl_state_pkg::soc_dbg_state_t   Lifecycle SoC debug state; indicates whether debug is permitted and at what privilege level.  
+  lc_dft_en_i   input   lc_ctrl_pkg::lc_tx_t   Lifecycle DFT (design-for-test) enable.  
+  lc_hw_debug_en_i   input   lc_ctrl_pkg::lc_tx_t   Lifecycle hardware debug enable.  
+  lc_raw_test_rma_i   input   lc_ctrl_pkg::lc_tx_t   Lifecycle raw test/RMA (return material authorization) enable; highest privilege.  
+  lc_cpu_en_i   input   lc_ctrl_pkg::lc_tx_t   Lifecycle CPU enable; indicates if CPU is permitted to run.  
+  lc_rma_state_i   input   lc_ctrl_pkg::lc_tx_t   Lifecycle RMA state; if asserted, device is in RMA mode with maximum debug access.  
+  boot_status_i   input   pwrmgr_pkg::pwr_boot_status_t   Boot status from power manager; indicates boot phase or completion.  
+  halt_cpu_boot_i   input   1   Halt CPU boot signal; forces CPU to halt before execution starts.  
+  continue_cpu_boot_o   output   rom_ctrl_pkg::pwrmgr_data_t   Continue CPU boot signal; released by debug module to allow CPU to proceed.  
+
+Behavioral requirements
+
+- Dual TileLink interfaces. TopModule exposes two independent TileLink register buses: one for core CPU and one for JTAG. Both present the same logical register map, but are independently arbitrated. Writes to either side update shared state with potential race conditions detected and reported.
+
+- Debug policy broadcast. The soc_dbg_policy_bus_o output is a complex struct encoding the current debug policy (e.g., JTAG enabled, core debug enabled, trace enabled, privilege level). All debug endpoints in the SoC listen to this signal and adjust their behavior accordingly.
+
+- Lifecycle-gated access. Debug features are enabled or disabled based on lifecycle signals:
+  - lc_hw_debug_en_i: Basic hardware debug (breakpoints, single-step).
+  - lc_dft_en_i: Design-for-test features (scan, boundary scan).
+  - lc_raw_test_rma_i: RMA-level access (full debug, test, JTAG lock override).
+  - lc_rma_state_i: Device is in RMA mode; debug policy is most permissive.
+  - soc_dbg_state_i: Fine-grained state (locked, dev, prod, etc.) determining exact access rights.
+
+- Shadowed registers. Critical registers (e.g., debug enable, lock bits) are shadowed to protect against fault injection. The main and shadow copies are compared, and mismatches raise alerts. The rst_shadowed_ni input allows testing of shadow logic independently.
+
+- CPU boot control. The module can halt the CPU before boot starts via halt_cpu_boot_i, and allows continuation via continue_cpu_boot_o. This is used for debug attachment before ROM execution.
+
+- Alert support. Register access violations, lifecycle mismatch, and shadow register corruption are reported via alert_tx_o. Alerts respect the AlertAsyncOn mask.
+
+- RMA mode. When lc_rma_state_i or lc_raw_test_rma_i is high, debug is maximally permissive, overriding normal lifecycle restrictions.
+
+Example
+
+Enable debug on a device in lifecycle state DEV:
+- Lifecycle provides: lc_hw_debug_en_i = 1, lc_dft_en_i = 1, lc_raw_test_rma_i = 0, soc_dbg_state_i = DEV.
+- Write register via core_tl_i to set dbg_enable = 1.
+- Shadow copy is updated; comparison succeeds (no mismatch).
+- soc_dbg_policy_bus_o is updated to reflect DEV debug policy: basic debug, DFT allowed, JTAG enabled.
+- All debug endpoints observe this policy and adjust (e.g., JTAG controller enables TAP, CPU allows breakpoints).
+- Later, write to dbg_lock register to lock debug.
+- soc_dbg_policy_bus_o transitions to locked state; further debug requests are denied.

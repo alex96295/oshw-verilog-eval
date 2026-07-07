@@ -1,0 +1,81 @@
+Design a module called TopModule. This module is a round-robin priority arbiter (ppc = programmable priority counter) that grants exclusive access to one of N requesters using a rotating priority scheme.
+
+Overview
+
+TopModule arbitrates between N independent requesters using a round-robin priority scheme. Unlike fixed priority, round-robin rotates the priority after each grant, ensuring fairer distribution of access over time. On each cycle, the arbiter selects the highest-priority pending request based on the current rotation mask, and after granting, the mask advances to give the next requester higher priority on the following cycle.
+
+Parameters
+
+  Parameter   Meaning   Default  
+ ----------- --------- --------- 
+  N   Number of requesters.   8  
+  DW   Width of the data payload per requester, in bits.   32  
+  EnDataPort   When 1, enable data payload passthrough; when 0, data_o is undriven.   1  
+  req_chk_i   Unused input signal (for compatibility).   —  
+  IdxW   Width of the index output (computed as ceil(log2(N))).   —  
+
+Interface
+
+  Port   Direction   Width   Description  
+ ------ ----------- ------- ------------- 
+  clk_i   input   1   System clock.  
+  rst_ni   input   1   Asynchronous active-low reset.  
+  req_chk_i   input   1   Unused input (reserved for future or compatibility).  
+  req_i   input   N   Request vector: bit i is high when requester i is requesting access.  
+  data_i   input   DW×N   Data payload array: data_i[i] is the data from requester i.  
+  gnt_o   output   N   Grant vector: bit i is high when requester i is granted. Only one bit may be high per cycle.  
+  idx_o   output   IdxW   Index of the granted requester (0 to N-1); only valid when valid_o is high.  
+  valid_o   output   1   High when at least one requester has been granted (when req_i != 0).  
+  data_o   output   DW   Data from the granted requester; valid when valid_o is high.  
+  ready_i   input   1   Ready signal: when high, the arbiter may grant and transfer the current request.  
+
+Behavioral requirements
+
+Round-Robin Priority
+- The module maintains an internal priority mask that rotates after each grant.
+- On each cycle, the arbiter selects the highest-priority pending request, where priority is determined by masking lower-indexed requests and wrapping around to higher indices.
+- The mask automatically advances after a grant is accepted (when valid_o && ready_i).
+
+Mask Rotation
+- The priority mask is latched and updated on each clock edge when a grant occurs.
+- After granting to index N, the mask rotates so that index N+1 (modulo N) becomes the lowest-priority base, giving index (N+1)%N the highest priority on the next grant.
+- This ensures that if all requesters are active, they each receive one grant in round-robin order.
+
+Data Passthrough
+- When EnDataPort = 1, the data from the granted requester is driven onto data_o.
+- When EnDataPort = 0, data_o is not used.
+
+Combinational Arbitration
+- The grant selection is combinational based on the current masked request and the internal mask.
+- valid_o is high whenever req_i != 0.
+- gnt_o bits are driven high only when ready_i is also high.
+
+Ready Handshake
+- When ready_i is low, no grant is issued (all gnt_o bits are low), but the internal mask is not advanced.
+- When ready_i is high and a request is pending, a grant is issued and the internal mask advances.
+- This implements a valid/ready handshake on the output side.
+
+Mask Stall Behavior
+- If a requester holds ready_i low while a grant is pending, the arbiter stalls at the current priority: it re-grants the same requester on subsequent cycles until ready_i is released.
+- Once released with a grant, the mask advances.
+- If the same requester remains the highest-priority pending requester after a grant, it may be granted again; the mask advances regardless.
+
+Reset
+- On rst_ni assertion (active low), the internal priority mask is reset to all zeros (or a neutral state).
+
+Example
+
+With N = 4, DW = 8:
+
+  Cycle   req_i   ready_i   gnt_o (grant index)   Internal Mask   Notes  
+ ------- --------- --- --- --- --- 
+  0   4'b1111   1   0001 (idx=0)   Initially 0; grant req[0]  
+  1   4'b1111   1   0010 (idx=1)   Advance to 1; grant req[1]  
+  2   4'b1111   1   0100 (idx=2)   Advance to 2; grant req[2]  
+  3   4'b1111   1   1000 (idx=3)   Advance to 3; grant req[3]  
+  4   4'b1111   1   0001 (idx=0)   Wrap to 0; grant req[0]  
+  5   4'b1100   1   0100 (idx=2)   At priority 0, but req[0] not set; check higher, grant req[2]  
+  6   4'b1100   0   0000   No grant (ready=0), mask doesn't advance  
+  7   4'b1100   1   1000 (idx=3)   Mask advances from grant at cycle 5; grant req[3]  
+
+Round-robin ensures fairness: each active requester gets a turn in order, preventing starvation.

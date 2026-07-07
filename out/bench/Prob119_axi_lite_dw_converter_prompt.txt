@@ -1,0 +1,109 @@
+Design a module called TopModule. This module is an AXI4-Lite data-width converter: it adapts transactions between AXI4-Lite buses with different data widths (e.g., 32-bit to 64-bit), handling alignment, packing, and unpacking of data across beat boundaries.
+
+Overview
+
+TopModule bridges AXI4-Lite buses with different data widths. It handles the asymmetric data width conversion by breaking down wider-data transfers into multiple narrower beats (or combining narrower beats into wider ones) while maintaining protocol compliance. Address, control signals, and response codes are transformed to match the target width; write strobes and read data alignment are adjusted accordingly. The module ensures atomic visibility and ordering constraints are preserved.
+
+Parameters
+
+  Parameter   Meaning   Constraint  
+ ----------- --------- ------------ 
+  AxiAddrWidth   Width of the AXI4-Lite address field, in bits.   ≥ 1.  
+  SlvAxiDataWidth   Width of the AXI4-Lite data field on the slave (upstream) side, in bits.   ≥ 8; typically the narrower side.  
+  MstAxiDataWidth   Width of the AXI4-Lite data field on the master (downstream) side, in bits.   ≥ 8; typically the wider side.  
+
+Interface
+
+Clock and Reset
+- clk_i: input, clock.
+- rst_ni: input, active-low asynchronous reset.
+
+Slave Port (Upstream; Narrower Data Width)
+- slv_aw_addr_i: input, logic [AxiAddrWidth-1:0]. Address for write.
+- slv_aw_valid_i: input, logic. Valid flag for address write.
+- slv_aw_ready_o: output, logic. Ready flag for address write.
+
+- slv_w_data_i: input, logic [SlvAxiDataWidth-1:0]. Write data.
+- slv_w_strb_i: input, logic [SlvAxiDataWidth/8-1:0]. Write strobes (byte enable).
+- slv_w_valid_i: input, logic. Valid flag for write data.
+- slv_w_ready_o: output, logic. Ready flag for write data.
+
+- slv_b_resp_o: output, logic [1:0]. Write response code (AXI resp).
+- slv_b_valid_o: output, logic. Valid flag for write response.
+- slv_b_ready_i: input, logic. Ready flag for write response.
+
+- slv_ar_addr_i: input, logic [AxiAddrWidth-1:0]. Address for read.
+- slv_ar_valid_i: input, logic. Valid flag for address read.
+- slv_ar_ready_o: output, logic. Ready flag for address read.
+
+- slv_r_data_o: output, logic [SlvAxiDataWidth-1:0]. Read data.
+- slv_r_resp_o: output, logic [1:0]. Read response code.
+- slv_r_valid_o: output, logic. Valid flag for read data.
+- slv_r_ready_i: input, logic. Ready flag for read data.
+
+Master Port (Downstream; Wider Data Width)
+- mst_aw_addr_o: output, logic [AxiAddrWidth-1:0]. Address for write (converted).
+- mst_aw_valid_o: output, logic. Valid flag for address write.
+- mst_aw_ready_i: input, logic. Ready flag for address write.
+
+- mst_w_data_o: output, logic [MstAxiDataWidth-1:0]. Write data (packed).
+- mst_w_strb_o: output, logic [MstAxiDataWidth/8-1:0]. Write strobes (adjusted).
+- mst_w_valid_o: output, logic. Valid flag for write data.
+- mst_w_ready_i: input, logic. Ready flag for write data.
+
+- mst_b_resp_i: input, logic [1:0]. Write response code.
+- mst_b_valid_i: input, logic. Valid flag for write response.
+- mst_b_ready_o: output, logic. Ready flag for write response.
+
+- mst_ar_addr_o: output, logic [AxiAddrWidth-1:0]. Address for read (converted).
+- mst_ar_valid_o: output, logic. Valid flag for address read.
+- mst_ar_ready_i: input, logic. Ready flag for address read.
+
+- mst_r_data_i: input, logic [MstAxiDataWidth-1:0]. Read data (packed).
+- mst_r_resp_i: input, logic [1:0]. Read response code.
+- mst_r_valid_i: input, logic. Valid flag for read data.
+- mst_r_ready_o: output, logic. Ready flag for read data.
+
+Behavioral Requirements
+
+- Write Path Conversion (Slave to Master). 
+  - When a write address (AW) arrives on the slave side, the address is forwarded to the master side unchanged.
+  - Write data (W) arriving on the slave side is packed/buffered according to the data width ratio. If SlvAxiDataWidth < MstAxiDataWidth, multiple slave-side W beats are accumulated until a master-side W beat can be formed. The write strobes are mapped accordingly: slave strobes occupy the appropriate byte lanes in the master strobe.
+  - If SlvAxiDataWidth > MstAxiDataWidth, a single slave W beat is split into multiple master W beats.
+
+- Read Path Conversion (Master to Slave).
+  - When a read address (AR) arrives on the slave side, the address is forwarded to the master side unchanged.
+  - Read data (R) arriving from the master side is unpacked/buffered. If MstAxiDataWidth > SlvAxiDataWidth, multiple master R beats are generated from each slave R beat. If MstAxiDataWidth < SlvAxiDataWidth, multiple master R beats are accumulated into one slave R beat.
+  - Read data is extracted from the appropriate byte lanes based on address alignment.
+
+- Alignment. The address field determines which lane(s) of the wider bus are used. Lower address bits (within log2(width_ratio)) select the offset in the wider word.
+
+- Response Handling. Write and read response codes (resp) are propagated unchanged. If multiple slave-to-master beats carry response codes, the module selects the most severe error (DECERR > SLVERR > OKAY > EXOKAY) and returns it.
+
+- Atomicity. The module ensures that all data corresponding to a single slave-side transaction is completed before responding. Partial writes or reads are not visible to the upstream master.
+
+- Reset. On release from reset (rst_ni assertion), all buffered state is cleared and no transactions are in flight.
+
+Throughput and Latency
+
+- Throughput: Limited by the data width ratio and the slower port (slave or master). One slave-side transaction may require multiple master-side beats or vice versa.
+- Latency: Buffering required for width conversion; one or more cycles depending on conversion direction and width ratio.
+
+Clock and Reset Domains
+
+- All ports operate in the same clk_i domain.
+- Reset is asynchronous (rst_ni, active low).
+
+Example Behavior
+
+Assume SlvAxiDataWidth = 32, MstAxiDataWidth = 64:
+
+1. Slave AW to address 0x0004, followed by W with data 32'hDEADBEEF (strobes all ones):
+   - Master AW to 0x0000 (address aligned).
+   - Master W data occupies upper 32 bits: 64'h00000000DEADBEEF (strobes: 16'h00FF for lower bytes, adjusted).
+
+2. Master AR to 0x0000 returns R with 64'hCAFECAFEDEADBEEF:
+   - Slave R beat 0 (address 0x0000): 32'hDEADBEEF.
+   - Slave R beat 1 (address 0x0004): 32'hCAFECAFE.
+
+The module handles alignment and packing transparently while maintaining AXI4-Lite ordering and atomicity.

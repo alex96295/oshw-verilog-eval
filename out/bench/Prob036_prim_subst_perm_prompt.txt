@@ -1,0 +1,71 @@
+Design a module called TopModule. This module is a substitution-permutation network (SPN) that implements a cryptographic diffusion layer using S-boxes and bit permutations, commonly used in lightweight block cipher designs.
+
+Overview
+
+TopModule implements a single SPN round with integrated key mixing. The module takes a plaintext-sized input and applies a substitution-permutation network to provide cryptographic diffusion. It supports multiple S-box/permutation pairs for both forward (encryption) and inverse (decryption) operations. Internally, it maintains parameterized S-box and permutation lookup tables based on standard ciphers (PRESENT and PRINCE), and applies these transformations combinationally to produce a diffused output. The module is suitable for use in iterative cipher constructions.
+
+Parameters
+
+  Parameter              Meaning   Constraint  
+ ---------------------- --------- ------------ 
+  Width                Data width, in bits.   32 or 64 (int unsigned). Default: 32.  
+  UseInverse           If 1, use inverse S-boxes and permutations for decryption.   0 or 1 (bit). Default: 0.  
+  SAdjustEndianness    If 1, adjust endianness for S-box indexing (internal detail).   0 or 1 (bit). Default: 0.  
+
+The module selects cipher parameters (S-boxes and permutations) from the cipher package based on Width. For Width = 32, PRESENT 32-bit S-box and permutation are used. For Width = 64, PRESENT 64-bit variants are used.
+
+Interface
+
+All ports are combinational; there is no clock, no reset, and no state.
+
+  Port        Direction   Width       Description  
+ ----------- ----------- ----------- ------------- 
+  input_i   input       Width     Input plaintext or ciphertext.  
+  output_o  output      Width     Output after substitution-permutation.  
+
+Behavioral requirements
+
+Substitution phase
+
+- S-box decomposition. The input is partitioned into 4-bit nibbles (for PRESENT). Each nibble is independently passed through a 4-bit S-box lookup:
+  - Forward S-box (UseInverse = 0): Maps 4-bit input to 4-bit output via PRESENT_SBOX4 or PRINCE_SBOX4 (depending on cipher).
+  - Inverse S-box (UseInverse = 1): Maps using the inverse tables (PRESENT_SBOX4_INV, PRINCE_SBOX4_INV).
+- Byte/Nibble alignment. For Width = 32, 8 S-boxes (one per nibble) are applied in parallel. For Width = 64, 16 S-boxes are applied in parallel.
+
+Permutation phase
+
+- Bit-level permutation. After substitution, the output is rearranged according to a fixed permutation table. Each bit of the substitution output is placed into a new position as specified by the permutation:
+  - Forward permutation (UseInverse = 0): Uses PRESENT_PERM32 or PRESENT_PERM64.
+  - Inverse permutation (UseInverse = 1): Uses PRESENT_PERM32_INV or PRESENT_PERM64_INV.
+- Permutation definition. The permutation is typically represented as an array where the entry at index i specifies the source bit position that feeds bit i of the output.
+
+Combinational behavior
+
+- All operations (substitution and permutation) are fully combinational.
+- The output responds immediately to input changes with no clocked delay.
+
+Typical usage in iterative ciphers
+
+- Each SPN round typically includes:
+  1. Key XOR (XOR with round key) — performed external to this module.
+  2. Substitution-permutation (this module).
+- Multiple rounds (e.g., 6 rounds for PRESENT) are cascaded with round key updates to achieve security.
+
+Example (Width = 32, UseInverse = 0, PRESENT cipher)
+
+Assume input = 0x0123456789ABCDEF (32 bits) and all nibbles are distinct:
+
+  Stage   Operation   Intermediate value  
+ ------- ----------- ------------------- 
+  Input   —           0x01234567         
+  S-box substitution   Apply PRESENT_SBOX4 to each nibble   (each nibble transformed)  
+  Permutation   Rearrange bits per PRESENT_PERM32   0x... (permuted result)  
+  Output   —           Diffused 32-bit result  
+
+Due to the nonlinearity of S-boxes and the spreading nature of the permutation, small input changes produce large output changes (diffusion property).
+
+Security properties
+
+- Substitution provides nonlinearity and resistance to linear attacks.
+- Permutation ensures that changes in one nibble affect multiple nibbles in the output, providing diffusion across the entire state.
+- This design is widely used in lightweight cryptography (PRESENT, PRINCE) where silicon area is constrained.

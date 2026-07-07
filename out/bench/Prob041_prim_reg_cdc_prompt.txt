@@ -1,0 +1,92 @@
+Design a module called TopModule. This module implements a register clock-domain-crossing (CDC) bridge that transfers data between two asynchronous clock domains while maintaining synchronization and coherency.
+
+Overview
+
+TopModule is a CDC register bridge that safely synchronizes a data value and associated control signals across a clock-domain boundary. It allows a source clock domain to write or read data and provides corresponding read/write handshakes to a destination clock domain. The module uses two-phase handshaking with Gray-code or metastability-hardened synchronizers to safely cross clock boundaries.
+
+Parameters
+
+  Parameter   Meaning   Constraint  
+ ----------- --------- ------------ 
+  DataWidth   Width of the data being transferred, in bits.   ≥ 1; typically 8, 16, 32.  
+  ResetVal   Reset value for the register.   DataWidth bits.  
+  BitMask   Bit mask for write operations.   DataWidth bits; 1 enables write to that bit.  
+  DstWrReq   Enable write-request mode in destination domain.   Bit; if 1, destination can request updates; if 0, source drives updates.  
+
+Interface
+
+TopModule bridges two independent clock domains (clk_src_i and clk_dst_i) with independent resets.
+
+Source Domain
+
+  Port   Direction   Width   Description  
+ ------ ----------- ------- ------------- 
+  clk_src_i   input   1   Source clock.  
+  rst_src_ni   input   1   Active-low asynchronous reset for source domain.  
+  src_regwen_i   input   1   Register write-enable; gates write permission independent of src_we_i.  
+  src_we_i   input   1   Write enable: asserted to initiate a write transaction on the next clock edge.  
+  src_re_i   input   1   Read enable: asserted to initiate a read transaction on the next clock edge.  
+  src_wd_i   input   DataWidth   Write data from source.  
+  src_busy_o   output   1   Busy flag: asserted while a transaction is in progress; prevents new transactions when high.  
+  src_qs_o   output   DataWidth   Synchronized read data returned to source.  
+
+Destination Domain
+
+  Port   Direction   Width   Description  
+ ------ ----------- ------- ------------- 
+  clk_dst_i   input   1   Destination clock.  
+  rst_dst_ni   input   1   Active-low asynchronous reset for destination domain.  
+  dst_ds_i   input   DataWidth   Destination domain data input (e.g., from hardware).  
+  dst_qs_i   input   DataWidth   Current destination register value.  
+  dst_update_i   input   1   Update strobe: asserts when new data from dst_ds_i is available.  
+  dst_we_o   output   1   Write enable to destination register: asserted when source writes to this register.  
+  dst_re_o   output   1   Read enable to destination register: asserted when source reads from this register.  
+  dst_regwen_o   output   1   Register write-enable gated to destination (mirrors src_regwen_i after CDC).  
+  dst_wd_o   output   DataWidth   Write data to destination register (source domain data synchronized).  
+
+Behavioral requirements
+
+- Write transaction (src → dst).
+  - When src_we_i is asserted (and src_regwen_i is high), a write transaction starts. src_busy_o is raised immediately and remains high until the destination clock domain acknowledges receipt.
+  - The write data src_wd_i is captured and synchronized to the destination domain via CDC logic (typically dual-flop synchronizers).
+  - On the destination side, dst_we_o pulses high to indicate write-enable, driving dst_wd_o with the synchronized source data.
+  - After the destination domain samples the write, an acknowledgment is synchronized back to the source domain, clearing src_busy_o.
+  - BitMask gates individual bits: if BitMask[i] = 0, bit i of dst_wd_o is forced to 0 regardless of source data.
+
+- Read transaction (dst → src).
+  - When src_re_i is asserted, a read transaction starts. The destination domain is requested to provide current register data via synchronized handshakes.
+  - dst_re_o pulses high to request the destination to provide its current value.
+  - The destination returns the value dst_qs_i, which is synchronized back to the source domain and appears on src_qs_o.
+  - src_busy_o remains high until the read completes.
+
+- Reset behavior.
+  - On reset in either domain, the register value in that domain resets to ResetVal.
+  - Asynchronous resets are used; CDC synchronizers handle metastability during reset.
+  - src_busy_o is deasserted on rst_src_ni low.
+  - dst_we_o and dst_re_o are deasserted on rst_dst_ni low.
+
+- Mutual exclusion.
+  - src_we_i and src_re_i should not both be asserted simultaneously; the module may prioritize one (typically write).
+  - src_regwen_i provides an additional gate; if low, all writes are blocked.
+
+- CDC safety.
+  - All data and control signals crossing clock boundaries use metastability-hardened synchronizers (dual-flop minimum) to prevent metastable glitches.
+  - No combinational paths cross clock domains.
+
+Clock and Reset Domains
+
+- Two independent synchronous clock domains: source (clk_src_i) and destination (clk_dst_i).
+- Two independent asynchronous resets: rst_src_ni and rst_dst_ni.
+
+Example: Write transaction
+
+  Src Cycle   clk_src_i   src_we_i   src_wd_i   src_busy_o   Dst Cycle   clk_dst_i   dst_we_o   dst_wd_o  
+ ----------- ----------- ----------- ---------- ----------- ----------- ----------- ---------- ---------- 
+  0   ↑   0   —   0   0   ↑   0   ×  
+  1   ↑   1   32'hABCD   1 (next)   1   ↑   0   ×  
+  2   ↑   0   ×   1   2   ↑   0   ×  
+  3   ↑   0   ×   1   3   ↑   1   32'hABCD  
+  4   ↑   0   ×   1   4   ↑   0   ×  
+  5   ↑   0   ×   0 (next)   5   ↑   0   ×  
+
+Write data from source cycle 1 arrives at destination cycle 3–4, with dst_we_o strobing high in cycle 3.

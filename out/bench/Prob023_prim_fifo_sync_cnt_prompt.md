@@ -1,0 +1,108 @@
+Design a module called TopModule. This module is a synchronous FIFO fill-level counter with optional security hardening. It tracks write and read pointer positions and computes the fill level (number of words in the FIFO), with support for error detection via redundant counters.
+
+## Overview
+
+TopModule maintains dual pointers (write and read) for a synchronous FIFO in a single clock domain. It computes the fill level by calculating the difference between the write and read pointers, accounting for pointer wrap-around. An optional security mode uses redundant counters (up-counter and down-counter) to detect errors via a mismatch check.
+
+## Parameters
+
+| Parameter | Meaning | Default |
+|-----------|---------|---------|
+| `Depth` | FIFO capacity in words (typically a power of 2). | 4 |
+| `Secure` | When 1, enable redundant counter-based error detection; when 0, use simple flip-flop pointers. | 0 |
+| `NeverClears` | When 1, disable the `clr_i` (clear) functionality and assert that it is never used. | 0 |
+
+**Derived Parameters:**
+- `PtrW = $clog2(Depth)` bits: width of pointer values [0, Depth-1].
+- `DepthW = $clog2(Depth + 1)` bits: width of fill-level output.
+- Internally, pointers use wrap bits to distinguish full from empty.
+
+## Interface
+
+| Port          | Direction | Width   | Description |
+|---------------|-----------|---------|-------------|
+| `clk_i`       | input     | 1       | Clock. All state updates occur on rising edge. |
+| `rst_ni`      | input     | 1       | Asynchronous reset (active low). Initializes both pointers to zero. |
+| `clr_i`       | input     | 1       | Clear (reset) input. When high, forces both pointers to zero on the next clock. Takes priority over increment signals. |
+| `incr_wptr_i` | input     | 1       | Write pointer increment enable. When high, advances the write pointer by one position. |
+| `incr_rptr_i` | input     | 1       | Read pointer increment enable. When high, advances the read pointer by one position. |
+| `wptr_o`      | output    | `PtrW`  | Write pointer output (current write position, modulo Depth). |
+| `rptr_o`      | output    | `PtrW`  | Read pointer output (current read position, modulo Depth). |
+| `full_o`      | output    | 1       | Full flag. High when the FIFO is full (write pointer would wrap and match read pointer MSB flip). |
+| `empty_o`     | output    | 1       | Empty flag. High when the FIFO is empty (write pointer equals read pointer, no wrap-bit difference). |
+| `depth_o`     | output    | `DepthW` | Fill level: number of words currently in the FIFO [0, Depth]. Combinational. |
+| `err_o`       | output    | 1       | Error flag (only in `Secure = 1` mode). High when the redundant counters detect a mismatch. |
+
+## Behavioral Requirements
+
+**Pointer Management:**
+- Each pointer is an internal `WrapPtrW = PtrW + 1` bit counter that includes a wrap-around bit.
+- `wptr_o` and `rptr_o` are the lower `PtrW` bits of the internal counters.
+- The wrap-around bit distinguishes full from empty: when both pointers have the same lower bits but the MSB (wrap bit) differs, the FIFO is full.
+
+**Increment Logic:**
+- When `incr_wptr_i` is high (on a clock edge), the write pointer advances by one position.
+- When `incr_rptr_i` is high, the read pointer advances by one position.
+- If a pointer reaches `Depth-1` and is incremented, it wraps to 0 and its wrap-bit toggles.
+- At most one pointer can be incremented per cycle; if both `incr_wptr_i` and `incr_rptr_i` are high simultaneously, both are advanced.
+
+**Clear Logic:**
+- When `clr_i` is high (on a clock edge), both pointers and wrap-bits reset to zero, regardless of increment signals.
+- After reset, the FIFO is empty.
+
+**Full Condition:**
+- `full_o` is high when the write pointer (with its wrap-bit) equals the read pointer with the wrap-bit inverted.
+- Mathematically: `full_o = (wptr_wrap_cnt == (rptr_wrap_cnt XOR MSB_MASK))`.
+
+**Empty Condition:**
+- `empty_o` is high when the write and read pointers are identical, including wrap-bits.
+- Mathematically: `empty_o = (wptr_wrap_cnt == rptr_wrap_cnt)`.
+
+**Fill Level Computation:**
+- `depth_o` is computed combinationally and reflects the number of words in the FIFO:
+  - If full, `depth_o = Depth`.
+  - If MSBs match, `depth_o = wptr_o - rptr_o`.
+  - If MSBs differ (write pointer has wrapped), `depth_o = Depth - rptr_o + wptr_o`.
+  - The output width is `DepthW` bits to represent values 0 to Depth.
+
+**Reset Behavior:**
+- On `rst_ni` low, all pointers clear to zero and both wrap-bits are zero.
+- After reset release, the FIFO is empty.
+
+**Security Mode (if `Secure = 1`):**
+- A redundant up-counter and down-counter pair track the fill level separately.
+- Both counters must always sum to `2^Width - 1` (a constant dependent on reset values).
+- If the sum deviates (due to bit-flip errors), `err_o` is asserted on the next clock.
+- The error detection is delayed by one cycle (it reports the state from the previous cycle).
+
+**Normal Mode (if `Secure = 0`):**
+- Simple flip-flop-based pointers without redundancy.
+- `err_o` is always 0 (no error detection).
+
+## Example Timing
+
+Assume `Depth = 4`, `Secure = 0`:
+
+1. **Reset:** `wptr_o = 0`, `rptr_o = 0`, `full_o = 0`, `empty_o = 1`, `depth_o = 0`.
+2. **Incr write (1 cycle):** `incr_wptr_i = 1` → `wptr_o = 1`, `depth_o = 1`, `empty_o = 0`.
+3. **Incr write (2 more cycles):** `wptr_o = 2`, `wptr_o = 3`, `depth_o = 3`.
+4. **Incr write (wrap):** `wptr_o = 3` + incr → `wptr_o = 0`, wrap-bit toggles. Now write and read pointers have different wrap-bits even though both show 0. `full_o = 1`, `depth_o = 4`.
+5. **Incr read:** `incr_rptr_i = 1` → `rptr_o = 1`, `depth_o = 3`, `full_o = 0`.
+
+## Edge Cases
+
+**Full-to-Wrap Transition:**
+- When the write pointer reaches `Depth-1` and is incremented while the read pointer is at 0 with opposite wrap-bit, the FIFO becomes full.
+
+**Empty-After-Wrap:**
+- After the read pointer catches up to the write pointer post-wrap, the FIFO becomes empty.
+
+**Simultaneous Increment:**
+- If both pointers are incremented in the same cycle, both advance by one and the fill level remains unchanged (unless one is at the boundary and wraps).
+
+## Assertions and Error Detection (Secure Mode)
+
+When `Secure = 1`, internal assertions verify:
+- The sum of the two redundant counters equals the expected constant.
+- Pointer transitions are consistent with increment and clear signals.
+- Errors are reported in the cycle following a detected mismatch.

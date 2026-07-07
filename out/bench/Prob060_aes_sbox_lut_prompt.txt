@@ -1,0 +1,44 @@
+Design a module called TopModule. This module is a combinational AES S-box (Substitution Box) that applies the byte-wise AES forward or inverse substitution using a lookup table for a single byte.
+
+Overview
+
+TopModule implements a single-byte AES S-box using a direct lookup table (LUT) approach. It applies either the forward S-box (used in encryption SubBytes) or the inverse S-box (used in decryption SubBytes) to an 8-bit input in a single combinational path. This is the simplest and fastest S-box implementation, with no masking or fault tolerance; it is primarily used for performance-critical or unmasked contexts. The module is purely combinational.
+
+Parameters
+
+None.
+
+Interface
+
+All ports are combinational; there is no clock or reset.
+
+  Port   Direction   Width   Description  
+ ------ ----------- ------- ------------- 
+  op_i   input   2   Cipher operation: CIPH_FWD = 2'b01 (forward S-box, encryption), CIPH_INV = 2'b10 (inverse S-box, decryption). Other values are undefined.  
+  data_i   input   8   Input byte to substitute.  
+  data_o   output   8   Output byte: the S-box result.  
+
+Behavioral requirements
+
+- Lookup table substitution.
+  - Forward (CIPH_FWD): data_o = S[data_i], where S is the AES forward S-box (256-entry table). Example: S[0x53] = 0xED.
+  - Inverse (CIPH_INV): data_o = S_inv[data_i], where S_inv is the AES inverse S-box. Example: S_inv[0xED] = 0x53.
+- Combinational computation. data_o is combinational from data_i and op_i; output updates immediately with no clock or pipeline delay.
+- Undefined behavior. If op_i is neither CIPH_FWD nor CIPH_INV, the output is undefined (typically a default or combinational artifact).
+
+Boundary conditions
+
+- Identity property. The inverse of forward: applying forward S-box then inverse S-box recovers the input. S_inv[S[x]] = x for all x ∈ {0..255}.
+- All-zero input. S[0x00] = 0x63 (forward), S_inv[0x00] = 0x52 (inverse).
+- All-ones input. S[0xFF] = 0x16 (forward), S_inv[0xFF] = 0x16 (inverse).
+
+Example
+
+  op_i   data_i   data_o  
+ -------- ---------- ---------- 
+  CIPH_FWD   0x00   0x63  
+  CIPH_FWD   0x53   0xED  
+  CIPH_FWD   0xFF   0x16  
+  CIPH_INV   0x00   0x52  
+  CIPH_INV   0xED   0x53  
+  CIPH_INV   0xFF   0x16

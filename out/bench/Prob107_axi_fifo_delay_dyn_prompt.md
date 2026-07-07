@@ -1,0 +1,101 @@
+Design a module called TopModule. This module implements per-channel AXI4 FIFOs with dynamic
+(cycle-by-cycle configurable) output delay insertion. It provides independent buffering on each of
+the five AXI4 channels, with optional variable-latency output stages for testing and verification.
+
+## Overview
+
+TopModule inserts asynchronous FIFOs on each AXI4 channel (AW, W, B, AR, R) to buffer transactions,
+and adds optional delay elements at the output of each FIFO. The delay on each channel can be
+configured dynamically via dedicated input signals, allowing the test harness to vary response
+latencies cycle-by-cycle. This is useful for verification to exercise master and slave behavior
+under varying transaction latencies without creating artificial backpressure.
+
+## Parameters
+
+| Parameter | Meaning |
+|-----------|---------|
+| `aw_chan_t` | Struct type for the AXI write-address channel. |
+| `w_chan_t` | Struct type for the AXI write-data channel. |
+| `b_chan_t` | Struct type for the AXI write-response channel. |
+| `ar_chan_t` | Struct type for the AXI read-address channel. |
+| `r_chan_t` | Struct type for the AXI read-data channel. |
+| `axi_req_t` | Struct type defining the complete AXI request. |
+| `axi_resp_t` | Struct type defining the complete AXI response. |
+| `FifoDepth` | Depth of each per-channel FIFO (number of entries). Typical: 2–16. |
+| `MaxDelayAw` | Maximum delay (in cycles) for AW output stage. 0 = no delay. |
+| `MaxDelayW` | Maximum delay for W output stage. |
+| `MaxDelayB` | Maximum delay for B output stage. |
+| `MaxDelayAr` | Maximum delay for AR output stage. |
+| `MaxDelayR` | Maximum delay for R output stage. |
+
+## Interface
+
+| Port | Direction | Type | Description |
+|------|-----------|------|-------------|
+| `clk_i` | input | logic | Clock signal. All FIFO and delay logic is synchronous to this clock. |
+| `rst_ni` | input | logic | Asynchronous active-low reset. |
+| `slv_req_i` | input | `axi_req_t` | AXI4 request from the upstream slave. |
+| `slv_resp_o` | output | `axi_resp_t` | AXI4 response to the upstream slave. Ready signals reflect FIFO occupancy. |
+| `mst_req_o` | output | `axi_req_t` | AXI4 request to the downstream master. Valid signals are delayed per configuration. |
+| `mst_resp_i` | input | `axi_resp_t` | AXI4 response from the downstream master. |
+| `delay_aw_i` | input | logic [clog2(MaxDelayAw+1)-1:0] | Number of cycles to delay AW output (0 = immediate). |
+| `delay_w_i` | input | logic [clog2(MaxDelayW+1)-1:0] | Number of cycles to delay W output. |
+| `delay_b_i` | input | logic [clog2(MaxDelayB+1)-1:0] | Number of cycles to delay B output. |
+| `delay_ar_i` | input | logic [clog2(MaxDelayAr+1)-1:0] | Number of cycles to delay AR output. |
+| `delay_r_i` | input | logic [clog2(MaxDelayR+1)-1:0] | Number of cycles to delay R output. |
+
+## Behavioral requirements
+
+- **Independent per-channel FIFOs.** Each AXI4 channel (AW, W, B, AR, R) is equipped with an independent
+  asynchronous FIFO that buffers transactions. Each FIFO has depth `FifoDepth`. Transactions on one
+  channel do not block others.
+
+- **FIFO ready/valid.** The slave's ready signals (`slv_resp_o.*.ready`) reflect whether the corresponding
+  FIFO has space. If a FIFO is full, its ready signal deasserts. The master's valid signals (`mst_req_o.*.valid`)
+  are asserted when the corresponding FIFO output is valid and the delay stage has expired.
+
+- **Dynamic delay on output.** Each channel's output is passed through a configurable delay stage. When
+  a transaction is read from the FIFO, the delay specified by the corresponding `delay_*_i` input is loaded
+  into a counter. The transaction is held internally until the counter expires, at which point the output
+  valid signal is asserted. The delay can change on every cycle; if a new transaction arrives while the
+  current one is delayed, it is held in the FIFO pending its turn.
+
+- **Delay mechanism.** For each channel:
+  - When FIFO output is valid and the delay is 0, output valid is asserted immediately.
+  - When FIFO output is valid and the delay is N > 0, a counter is loaded with N−1. Each cycle, the
+    counter decrements. When the counter reaches 0, output valid is asserted.
+  - If the downstream master asserts ready while the delay is active, the transaction is consumed (counter
+    is released, and the next FIFO entry is read).
+
+- **FIFO write-side.** The slave sends transactions which are written into the FIFO on the rising clock
+  edge if the FIFO has space. The slave must respect the ready signal.
+
+- **FIFO read-side.** The delay stage reads from the FIFO and holds data until the delay expires.
+  Once valid to the master, the master's ready signal advances the delay stage to the next FIFO entry
+  (or marks the current delay stage as empty if no more data).
+
+- **Backpressure.** If the delay stage is holding data and the downstream master is not ready, the slave
+  cannot send more data (FIFO fills). Once the master consumes the delayed data, the FIFO drains.
+
+- **Reset behavior.** On `rst_ni` assertion, all FIFOs and delay counters reset. After reset, all ready
+  signals are asserted and all valid signals are deasserted.
+
+## Clock and reset domains
+
+- Single clock domain: `clk_i` and `rst_ni`.
+
+## Example behavior
+
+1. **Zero delay.** `delay_aw_i=0`. Slave sends AW; it enters the FIFO and emerges immediately (delay = 0).
+   `mst_req_o.aw_valid` is asserted on the same cycle the FIFO output is valid.
+
+2. **Fixed 3-cycle delay on W.** `delay_w_i=3`. Slave sends W; it enters the W FIFO.
+   - Cycle 0: W enters FIFO.
+   - Cycle 1: W exits FIFO into delay stage. Delay counter = 2. Output valid = 0.
+   - Cycle 2: Delay counter = 1. Output valid = 0.
+   - Cycle 3: Delay counter = 0. Output valid = 1. Master sees W with 3-cycle latency.
+
+3. **Dynamic delay change.** `delay_r_i` changes from 2 to 5 mid-transaction.
+   - A transaction is in the delay stage with counter=1. New `delay_r_i=5` value is applied.
+   - If the transaction has not yet been consumed by the master, the new delay value applies to the
+     next transaction (or based on implementation, may re-load the current delay if not yet expired).

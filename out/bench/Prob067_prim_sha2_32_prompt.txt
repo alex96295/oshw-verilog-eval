@@ -1,0 +1,101 @@
+Design a module called TopModule. This module is a SHA-2 compression core supporting 32-bit datapath, primarily for SHA-256, with optional multimode support for SHA-384/512 via word buffering. It converts 32-bit input from an external FIFO into 64-bit words for the underlying 64-bit SHA-2 engine.
+
+Overview
+
+TopModule is a SHA-256 focused compression core with a 32-bit input datapath. It accepts 32-bit words from an external FIFO (fifo_rdata_i) and buffers/combines them into 64-bit words for the underlying SHA-2 64-bit compression engine. When MultimodeEn=1, it supports SHA-384 and SHA-512 by handling the word-width conversion. The module bridges a 32-bit external interface to a 64-bit internal SHA-2 core, simplifying integration with 32-bit buses while maintaining compatibility with multi-mode SHA-2 algorithms.
+
+Parameters
+
+  Parameter   Meaning   Constraint  
+ ----------- --------- ------------ 
+  MultimodeEn   Enable SHA-384/512 via word buffering. If 0, SHA-256 only.   bit, default 0.  
+
+Interface
+
+  Port   Direction   Width / Type   Description  
+ ------ ----------- -------------- ------------- 
+  clk_i   input   1   Clock. Word buffer, state, and SHA-2 engine driven by rising edge.  
+  rst_ni   input   1   Async active-low reset. Buffer and internal state cleared.  
+  wipe_secret_i   input   1   Secure wipe request. Sensitive state overwritten with wipe_v_i.  
+  wipe_v_i   input   32 (sha_word32_t)   Wipe value. Replaces sensitive state (word buffer, digest) on wipe.  
+  fifo_rvalid_i   input   1   FIFO read valid. Asserted when fifo_rdata_i contains a valid 32-bit word.  
+  fifo_rdata_i   input   sha_fifo32_t (32-bit data + 4-bit mask)   FIFO read data: 32-bit word and per-byte valid mask. Mask[i] indicates byte i is valid.  
+  fifo_rready_o   output   1   FIFO read ready. Asserted when the module is ready to consume a 32-bit word.  
+  sha_en_i   input   1   SHA enable. Must be high for compression to proceed.  
+  hash_start_i   input   1   Hash start signal. Begins a new hash; initializes digest and clears word buffer.  
+  hash_stop_i   input   1   Hash stop signal. Pauses hash computation.  
+  hash_continue_i   input   1   Hash continue signal. Resumes a paused hash.  
+  digest_mode_i   input   3 (digest_mode_e)   Hash mode: SHA2_256, SHA2_384, SHA2_512 (SHA2_384 and SHA2_512 only available if MultimodeEn=1).  
+  hash_process_i   input   1   Process signal. Triggers round computation.  
+  hash_done_o   output   1   Hash done signal. Asserted when final block compression completes.  
+  message_length_i   input   [63:0]   Message length in bits (for padding).  
+  digest_i   input   [7:0][63:0] (sha_word64_t[8])   Digest input: 8 words of 64 bits. Loaded before hash_start, updated by the underlying SHA-2 engine.  
+  digest_we_i   input   [7:0]   Digest write-enable: per-word strobes for digest_i.  
+  digest_o   output   [7:0][63:0]   Digest output: 8 words of 64 bits from the underlying SHA-2 engine. For SHA-256, digest_o[0..3] are used (with upper 32 bits zero if MultimodeEn=1).  
+  digest_on_blk_o   output   1   Digest on block boundary. Asserted when a message block boundary is reached.  
+  hash_running_o   output   1   Hash running signal. High during active hash computation.  
+  idle_o   output   1   Idle signal. High when not computing, allowing new hash operations.  
+
+Behavioral requirements
+
+- 32-bit to 64-bit conversion. The module accepts 32-bit words from fifo_rdata_i and combines pairs of 32-bit words into 64-bit words for the underlying 64-bit SHA-2 engine:
+  - For SHA-256: 16 × 32-bit words (512 bits) are combined into 8 × 64-bit words.
+  - For SHA-384/512 (MultimodeEn=1): 32 × 32-bit words (1024 bits) are combined into 16 × 64-bit words.
+
+- Word buffering. An internal word buffer (word_buffer_q and word_part_count_q) accumulates 32-bit words until a 64-bit word is complete. The module tracks how many 32-bit parts of a 64-bit word have been accumulated.
+
+- FIFO pacing. The module asserts fifo_rready_o when it is ready to accept a 32-bit word. It deasserts fifo_rready_o when the buffer is full (a 64-bit word is ready for the SHA-2 engine) or if the internal SHA-2 engine is stalled.
+
+- SHA-256 mode (digest_mode_i = SHA2_256):
+  - Each 32-bit input word is loaded directly as a 64-bit word (with upper 32 bits zero) without buffering.
+  - 16 words (512 bits total) are provided to the SHA-2 engine per message block.
+  - Output digest_o[0..3] are used; digest_o[4..7] are unused.
+
+- Multimode (digest_mode_i = SHA2_384 or SHA2_512, if MultimodeEn=1):
+  - Pairs of 32-bit words are combined into 64-bit words (lower 32 bits from first word, upper 32 bits from second word).
+  - 16 words (32 × 32-bit inputs = 1024 bits) are provided per message block.
+  - Output digest_o[0..7] are all used.
+
+- Start/continue/stop semantics: Same as prim_sha2. hash_start clears the word buffer and initializes the SHA-2 engine. hash_continue resumes. hash_done_o is asserted when the underlying engine completes the final block.
+
+- Wiping (wipe_secret_i): Word buffer and underlying digest state are overwritten with wipe_v_i.
+
+- Padding: External logic assembles 32-bit words and signals end-of-message. The underlying SHA-2 engine expects 64-bit words; this module handles the width conversion transparently.
+
+Clock domain
+
+Single clock domain driven by clk_i; asynchronous reset via rst_ni.
+
+Latency
+
+- Word buffering: 1 cycle per 32-bit input word (2 words per 64-bit internal word).
+- Round latency: Same as underlying 64-bit SHA-2 engine (1 cycle per round; 64 rounds for SHA-256, 80 for SHA-384/512).
+
+Example
+
+Scenario: Compute SHA-256 of a 32-bit input stream.
+
+  Input   Cycle   Buffer State   Output   Notes  
+ ------- ------- -------------- -------- ------- 
+  hash_start=HIGH, digest_mode=SHA2_256   0   empty   -   Start SHA-256. Buffer cleared.  
+  fifo_rvalid=HIGH, fifo_rdata=(32 bits, mask=0xF)   1   word[0]   fifo_rready=HIGH   First word loaded. SHA-256: no buffering, load directly.  
+  (next 15 × 32-bit words, similar)   2-16   word[1..15]   -   Load remaining 15 words (512 bits total).  
+  hash_process=HIGH   17   -   -   Underlying SHA-2 engine begins rounds 0-63.  
+  (none)   80   -   digest_o=H[0..3]   SHA-256 compression complete.  
+  hash_done_o   81   -   hash_done_o=HIGH   Hash complete.  
+
+For multimode (digest_mode_i = SHA2_384, MultimodeEn=1):
+
+  Input   Cycle   Buffer State   Output   Notes  
+ ------- ------- -------------- -------- ------- 
+  hash_start=HIGH, digest_mode=SHA2_384   0   empty   -   Start SHA-384.  
+  fifo_rvalid=HIGH, fifo_rdata=word[0]   1   word_part_count=0   fifo_rready=LOW   First 32-bit word buffered (waiting for second).  
+  fifo_rvalid=HIGH, fifo_rdata=word[1]   2   word_part_count=0   fifo_rready=HIGH   Second word arrives; 64-bit word complete, fed to SHA-2.  
+  (next 30 × 32-bit words, pairs combined)   3-32   -   -   Total 32 × 32-bit words (1024 bits) for SHA-384.  
+  hash_process=HIGH   33   -   -   Begin 80 rounds for SHA-384.  
+  (none)   113   -   digest_o=H[0..7]   SHA-384 compression complete.  
+  hash_done_o   114   -   hash_done_o=HIGH   Hash complete.  
+
+Constraints:
+- For SHA-256 (MultimodeEn=0 or digest_mode=SHA2_256), 32-bit words are passed directly; no buffering overhead.
+- For SHA-384/512 (digest_mode=SHA2_384/512, MultimodeEn=1), pairs of 32-bit words must arrive sequentially to form 64-bit words; the module handles buffering transparently.

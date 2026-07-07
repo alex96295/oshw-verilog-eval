@@ -1,0 +1,131 @@
+Design a module called TopModule. This module is a full AXI4-Lite crossbar interconnect: it provides N masters x M slaves with full connectivity, address-based routing, and fair arbitration for each slave port.
+
+Overview
+
+TopModule is a complete AXI4-Lite interconnect crossbar. It connects N AXI4-Lite master ports to M AXI4-Lite slave ports with full address decoding and routing: each master can access any slave port based on address ranges, and each slave can be accessed by any master. The crossbar includes arbitration logic (typically round-robin or priority) to manage contention when multiple masters request the same slave. Independent arbitration is performed per slave and per channel (AW, W, AR) to maximize throughput.
+
+Parameters
+
+  Parameter   Meaning   Constraint  
+ ----------- --------- ------------ 
+  NoMstPorts   Number of AXI4-Lite master input ports.   ≥ 1.  
+  NoSlvPorts   Number of AXI4-Lite slave output ports.   ≥ 1.  
+  AxiAddrWidth   Width of the AXI4-Lite address field, in bits.   ≥ 1.  
+  AxiDataWidth   Width of the AXI4-Lite data field, in bits.   ≥ 8.  
+  aw_chan_t, w_chan_t, b_chan_t, ar_chan_t, r_chan_t   Struct types for AXI4-Lite channels.   User-supplied.  
+  AddrRules   Address-to-slave mapping rules.   Array of rules specifying address ranges and target slave port index for each rule.  
+
+Interface
+
+Clock and Reset
+- clk_i: input, clock.
+- rst_ni: input, active-low asynchronous reset.
+
+Master Ports (Upstream; array indexed [0:NoMstPorts-1])
+For each AXI4-Lite master:
+
+- mst_aw_chans_i: input, array of aw_chan_t. Address write channels.
+- mst_aw_valids_i: input, array of logic. Valid flags for address write.
+- mst_aw_readies_o: output, array of logic. Ready flags for address write.
+
+- mst_w_chans_i: input, array of w_chan_t. Write data channels.
+- mst_w_valids_i: input, array of logic. Valid flags for write data.
+- mst_w_readies_o: output, array of logic. Ready flags for write data.
+
+- mst_b_chans_o: output, array of b_chan_t. Write response channels.
+- mst_b_valids_o: output, array of logic. Valid flags for write response.
+- mst_b_readies_i: input, array of logic. Ready flags for write response.
+
+- mst_ar_chans_i: input, array of ar_chan_t. Address read channels.
+- mst_ar_valids_i: input, array of logic. Valid flags for address read.
+- mst_ar_readies_o: output, array of logic. Ready flags for address read.
+
+- mst_r_chans_o: output, array of r_chan_t. Read data channels.
+- mst_r_valids_o: output, array of logic. Valid flags for read data.
+- mst_r_readies_i: input, array of logic. Ready flags for read data.
+
+Slave Ports (Downstream; array indexed [0:NoSlvPorts-1])
+For each AXI4-Lite slave:
+
+- slv_aw_chans_o: output, array of aw_chan_t. Address write channels.
+- slv_aw_valids_o: output, array of logic. Valid flags for address write.
+- slv_aw_readies_i: input, array of logic. Ready flags for address write.
+
+- slv_w_chans_o: output, array of w_chan_t. Write data channels.
+- slv_w_valids_o: output, array of logic. Valid flags for write data.
+- slv_w_readies_i: input, array of logic. Ready flags for write data.
+
+- slv_b_chans_i: input, array of b_chan_t. Write response channels.
+- slv_b_valids_i: input, array of logic. Valid flags for write response.
+- slv_b_readies_o: output, array of logic. Ready flags for write response.
+
+- slv_ar_chans_o: output, array of ar_chan_t. Address read channels.
+- slv_ar_valids_o: output, array of logic. Valid flags for address read.
+- slv_ar_readies_i: input, array of logic. Ready flags for address read.
+
+- slv_r_chans_i: input, array of r_chan_t. Read data channels.
+- slv_r_valids_i: input, array of logic. Valid flags for read data.
+- slv_r_readies_o: output, array of logic. Ready flags for read data.
+
+Behavioral Requirements
+
+- Address Decoding. For each AW and AR request, the address is decoded using AddrRules. The module identifies the target slave port index based on which rule's address range contains the request address. If no rule matches, the module returns a decode error (SLVERR or DECERR).
+
+- Arbitration. For each slave port, when multiple masters request access on the same channel (AW, W, or AR), the crossbar arbitrates using a fair arbitration scheme (typically round-robin):
+  - Only one master at a time is granted access to the slave port for each channel.
+  - Ungranteed masters see ready = 0 for that channel.
+  - Arbitration is independent per channel and per slave: AW and AR can be granted to different masters simultaneously.
+
+- Routing. Each master's request is routed to the decoded slave port. The request payload (address, data, strobes) is passed through unchanged. Master-side and slave-side valid/ready signals are connected per the routing decision.
+
+- Response Routing. Responses (B and R) from each slave are routed back to the requesting master based on stored master port information. The crossbar maintains sufficient state (typically a FIFO or counter per slave output) to track which master issued each request.
+
+- Independent Channels. Write address (AW) and write data (W) are arbitrated independently per slave, as per AXI4-Lite spec. A master's AW request can be accepted in one cycle, while its W data is accepted later when W channel is granted.
+
+- Fairness. No master is indefinitely starved. Round-robin or weighted arbitration ensures all requesting masters eventually get access to each slave.
+
+- Address Errors. Requests to unmapped addresses are either:
+  - Blocked and returned with error response, or
+  - Forwarded to a default slave (if one is designated).
+
+- Reset. On release from reset (rst_ni assertion), all arbitration state, routing tables, and pending requests are cleared. No transactions are in flight.
+
+- Handshake Transparency. Valid and ready signals propagate according to routing and arbitration. A slow slave does not block other slaves' traffic. A slow master does not block other masters from accessing the same slave.
+
+Throughput and Latency
+
+- Throughput: Multiple independent transactions can proceed concurrently:
+  - Different masters can access different slaves simultaneously.
+  - The same slave can be accessed by multiple masters sequentially (arbitrated per cycle).
+  - Total crossbar throughput is limited by the slowest channel (AW, W, or AR) on the most congested slave.
+
+- Latency: Minimal; address decoding and arbitration are typically combinational or single-cycle.
+
+Clock and Reset Domains
+
+- All ports operate in the same clk_i domain.
+- Reset is asynchronous (rst_ni, active low).
+
+Example Behavior
+
+Assume 2 masters, 2 slaves, with address rules:
+- Slave 0: 0x0000–0x0FFF
+- Slave 1: 0x1000–0x1FFF
+
+Scenario 1:
+1. Master 0 and Master 1 both issue AW to addresses in Slave 0's range:
+   - Arbitration selects Master 0 (or priority-based); Master 0's AW is forwarded to Slave 0.
+   - Master 1 sees AW ready = 0 for Slave 0.
+
+2. Next cycle, Master 1's AW can be granted (if Master 0's AW was accepted).
+
+Scenario 2:
+1. Master 0 issues AW to Slave 0 (address 0x0100); Master 1 issues AW to Slave 1 (address 0x1100):
+   - Both requests are granted simultaneously (different slaves).
+   - Both AW requests proceed to their respective slaves in parallel.
+
+Scenario 3:
+1. Master 0 issues AW to Slave 0; Master 0 issues AR to Slave 1 (decoupled, per AXI4-Lite spec):
+   - AW and AR requests are independent and can proceed concurrently.
+
+The crossbar enables full connectivity between all masters and slaves with fair arbitration and address-based routing.

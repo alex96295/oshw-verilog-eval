@@ -1,0 +1,43 @@
+Design a module called TopModule. This module encodes a single-bit request signal into a differential pair (diff_p, diff_n) for transmission over differential lines, with registered outputs to harden against metastability.
+
+## Overview
+
+TopModule is a combinational and synchronous differential encoder that converts a single-ended request signal into a true differential pair. The input request is buffered and encoded such that diff_p mirrors the request value and diff_n is its complement, ensuring the differential pair is always antiphase when valid. The outputs are then registered to provide a stable differential signal and reduce metastability risk at receivers. Internal buffer primitives enforce secure encoding to prevent single-event upsets from corrupting the relationship between the two lines.
+
+## Parameters
+
+There are no parameters for TopModule.
+
+## Interface
+
+| Port       | Direction | Width | Description |
+|------------|-----------|-------|-------------|
+| `clk_i`    | input     | 1     | System clock (active on rising edge). |
+| `rst_ni`   | input     | 1     | Active-low synchronous reset. |
+| `req_i`    | input     | 1     | Request signal to be encoded. |
+| `diff_po`  | output    | 1     | Differential positive output (registered). |
+| `diff_no`  | output    | 1     | Differential negative output (registered). |
+
+## Behavioral requirements
+
+- **Encoding.** The request signal is internally buffered and directly encoded: the positive line (`diff_p_internal`) mirrors `req_i`, and the negative line (`diff_n_internal`) is its logical complement.
+- **Buffer protection.** The encoded lines pass through a secure buffer primitive to protect against glitches and single-event upsets that could momentarily break the antiphase relationship.
+- **Registration.** After buffering, the positive and negative lines are each registered independently:
+  - `diff_po` is a flip-flop with reset value 0.
+  - `diff_no` is a flip-flop with reset value 1.
+- **Antiphase guarantee.** At reset and under normal operation, the differential pair is always antiphase: when `diff_po = 0`, `diff_no = 1`, and vice versa.
+- **Reset behavior.** On assertion of `rst_ni` (active-low), `diff_po` resets to 0 and `diff_no` resets to 1.
+- **Latency.** There is a 1-cycle registered latency from `req_i` to `diff_po` and `diff_no`.
+
+## Timing example
+
+| Cycle | `req_i` | diff_p (internal) | diff_n (internal) | `diff_po` (registered) | `diff_no` (registered) |
+|-------|---------|-------------------|-------------------|------------------------|------------------------|
+| Reset | X       | —                 | —                 | 0                      | 1                      |
+| 0     | 0       | 0                 | 1                 | 0                      | 1                      |
+| 1     | 1       | 1                 | 0                 | 0                      | 1                      |
+| 2     | 1       | 1                 | 0                 | 1                      | 0                      |
+| 3     | 0       | 0                 | 1                 | 1                      | 0                      |
+| 4     | 0       | 0                 | 1                 | 0                      | 1                      |
+
+At cycle 0 (reset), the differential pair is valid antiphase (0/1). Following the request at cycle 1, the combinational encoding produces diff_p=1 and diff_n=0 internally. This is captured at the rising edge of cycle 2, updating the outputs. At cycle 3, the request drops; internal signals become 0/1, registered at cycle 4.

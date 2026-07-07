@@ -1,0 +1,68 @@
+Design a module called TopModule. This module computes GHASH (Galois/Counter Mode authentication tag), performing GF(2^128) multiplication and accumulation over a 128-bit field for AES-GCM.
+
+Overview
+
+TopModule is the GHASH (Galois Hash) core for AES-GCM authenticated encryption. GHASH multiplies each 128-bit message block by a hash key in GF(2^128), accumulating XOR the results to produce an authentication tag. The module uses the prim_gf_mult primitive for Galois field multiplication. It supports optional masking (DOM, 2-share) and optional masked GHASH computation.
+
+Parameters
+
+  Parameter   Meaning   Constraint  
+ ----------- --------- ------------ 
+  SecMasking   Enable 2-share DOM masking of GHASH state. If 1, state and data are shared.   bit, default 0.  
+  SecSBoxImpl   S-box implementation (LUT or Canright); not directly used by GHASH but required by aes_pkg.   enum.  
+  NumShares   Derived: 2 if SecMasking else 1.   int, read-only.  
+
+Interface
+
+  Port             Direction   Width / Type   Description  
+ ---------------- ----------- -------------- ------------- 
+  clk_i          input       1              Clock. State, hash key, and internal multiplier are clocked.  
+  rst_ni         input       1              Async active-low reset. GHASH state is zeroed.  
+  init_i         input       1              Initialize (load) the hash key. When asserted, the key from key_i is latched into the internal ghash_key register.  
+  update_i       input       1              Update (accumulate). When asserted, the state is XORed with data_i and multiplied by ghash_key.  
+  ghash_key_i    input       [127:0] × NumShares   The GHASH hash key H (or H^i for iteration i if using pipelined multiply). For NumShares=2, an array of two shares.  
+  data_i         input       [127:0] × NumShares   Input data block to be authenticated. XORed with internal state, then multiplied by ghash_key.  
+  ghash_state_o   output     [127:0] × NumShares   Output GHASH state (accumulated tag). Updated on each update_i pulse.  
+  ready_o        output      1              Ready signal. High when GHASH is idle (not computing a multiply). Permits new init or update requests.  
+
+Behavioral requirements
+
+- GHASH specification. GHASH is defined over GF(2^128) with irreducible polynomial 1 + x + x^2 + x^7 + x^128 (or equivalently, GCMIPoly = 0x87 in the high bits). For a sequence of blocks m_1, m_2, ..., m_n and hash key H (derived from AES key), the output is:
+  GHASH(H, m_1, ..., m_n) = (m_1  H^n) XOR (m_2  H^(n-1)) XOR ... XOR (m_n  H) 
+  where  denotes GF(2^128) multiplication.
+
+- Initialization. When init_i is asserted, the module latches the hash key from ghash_key_i and resets the internal accumulator state to zero. The ready signal becomes low during initialization, then high when ready to accept updates.
+
+- Update (accumulate). When update_i is asserted and ready_o is high:
+  1. The module computes new_state = (ghash_state XOR data_i)  ghash_key in GF(2^128).
+  2. On completion, ghash_state_o is updated to new_state.
+  3. The module asserts ready_o again when the multiplication is complete.
+
+- GF(2^128) multiplication. The module uses the prim_gf_mult primitive (instantiated internally or as a submodule reference) to compute the product. The multiplier has input operands (ghash_state XOR data_i) and ghash_key, and produces a 128-bit result over GF(2^128).
+
+- Masking (SecMasking=1). If SecMasking is enabled, ghash_key, data_i, and ghash_state are split into two shares (NumShares=2). The multiplication and XOR operations preserve the share structure: XOR of two shares yields the XOR of the underlying secrets, and masked GF mult (e.g., using DOM) maintains secrecy. The output ghash_state_o is the updated state as two shares; the unmasking is not performed internally.
+
+- Latency. The GHASH update latency depends on the prim_gf_mult configuration. Typical configurations use 1 or more cycles to complete a multiply. The module signals completion via ready_o, allowing pipelined or sequential GHASH processing.
+
+- Idle/ready semantics. At reset and after each update is acknowledged, the module is ready (ready_o = 1). While a multiply is in progress, ready_o = 0. New init or update requests must observe ready_o = 1.
+
+Clock domain
+
+Single clock domain driven by clk_i; asynchronous reset via rst_ni.
+
+Example
+
+Scenario: Compute GHASH over two 128-bit blocks using AES-GCM.
+
+  Operation   Input   State   Output   Notes  
+ ----------- ------- ------- -------- ------- 
+  Reset   -   -   0x00...00   GHASH state cleared.  
+  Init with H   ghash_key=H   -   -   Hash key latched. ready=1 after a few cycles.  
+  Update block 1   data=m1   0x00...00   S1 = m1H   state_o updated with (0 XOR m1)H = m1H.  
+  Update block 2   data=m2   S1   S2 = (S1 XOR m2)H   state_o updated with (S1 XOR m2)H. This accumulates m1H^2 + m2H.  
+
+Final tag ≈ S2, equivalent to GHASH(H, m1, m2).
+
+Constraints:
+- init_i and update_i should not both be asserted in the same cycle.
+- Respect ready_o; if ready_o=0, do not assert update_i.

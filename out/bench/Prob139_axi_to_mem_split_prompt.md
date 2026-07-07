@@ -1,0 +1,56 @@
+Design a module called TopModule. This module converts an AXI4 slave interface with wide data into split memory access ports, where each port handles a narrower data width, and data is distributed across ports to match the narrower width.
+
+## Overview
+
+TopModule is an AXI4-to-split-memory converter. It accepts AXI4 transactions with data width `AxiDataWidth` and distributes them across multiple memory ports, each with narrower data width `MemDataWidth`. For example, if AXI4 carries 128-bit data and each memory port accepts 32-bit data, the converter splits a single AXI4 beat into 4 parallel memory accesses. This is useful for systems with narrow memory interfaces that must handle wide AXI4 buses.
+
+## Parameters
+
+| Parameter | Meaning |
+|-----------|---------|
+| `axi_req_t`, `axi_resp_t` | AXI4 struct types. |
+| `AddrWidth`, `AxiDataWidth`, `IdWidth` | AXI4 widths. |
+| `MemDataWidth` | Width of each memory port's data. |
+| `BufDepth` | Buffer depth. |
+| `HideStrb` | Write strobe visibility. |
+| `OutFifoDepth` | Output FIFO depth. |
+| `NumMemPorts` | Derived from `AxiDataWidth / MemDataWidth`. |
+
+## Interface
+
+| Port | Direction | Type | Description |
+|------|-----------|------|-------------|
+| `clk_i` | input | - | Clock. |
+| `rst_ni` | input | - | Active-low reset. |
+| `slv_req_i` | input | `axi_req_t` | AXI4 request with wide data (`AxiDataWidth` bits). |
+| `slv_resp_o` | output | `axi_resp_t` | AXI4 response to master. |
+| `mem_req_o[NumMemPorts-1:0]` | output array | struct | Memory request to each port with narrower data. |
+| `mem_req_valid_o[NumMemPorts-1:0]` | output array | logic | Request valid for each port. |
+| `mem_req_ready_i[NumMemPorts-1:0]` | input array | logic | Request ready from each port. |
+| `mem_rsp_i[NumMemPorts-1:0]` | input array | struct | Memory response from each port. |
+| `mem_rsp_valid_i[NumMemPorts-1:0]` | input array | logic | Response valid from each port. |
+| `mem_rsp_ready_o[NumMemPorts-1:0]` | output array | logic | Response ready to each port. |
+
+## Behavioral requirements
+
+- **Data slicing.** A single AXI4 write beat with `AxiDataWidth` bits is split into `NumMemPorts` parallel memory requests, each carrying `MemDataWidth` bits. Port 0 gets bits [MemDataWidth-1:0], port 1 gets bits [2*MemDataWidth-1:MemDataWidth], etc.
+- **Strobe splitting.** Write strobes (AXI4 strobe bits) are also split across memory ports according to the data width slicing.
+- **Address replication.** All memory ports receive the same address (or slightly adjusted for sub-word addressing, if applicable).
+- **Parallel requests.** All `NumMemPorts` requests are issued in parallel (or all must be ready to accept a new beat).
+- **Response collection.** Read responses from all `NumMemPorts` ports are collected and reassembled into a single wide data word in AXI4 format.
+- **Synchronization.** All ports must be ready (or not ready) together; the converter does not support splitting across cycles in the common case.
+- **Buffering.** Internal FIFOs decouple the AXI4 side from the memory side.
+- **Reset behavior.** On reset, buffers and pending requests are cleared.
+
+## Throughput and latency
+
+- **Latency.** Depends on response collection and memory latency.
+- **Throughput.** Bounded by the slowest memory port; all ports must operate in lockstep.
+
+## Clock and reset domains
+
+Single clock domain.
+
+## Example behavior
+
+AXI4 carries 128-bit data, memory ports carry 32 bits each. An AXI4 write with address 0x1000 and data [0xCCCC_BBBB, 0xAAAA_8888, 0x6666_4444, 0x2222_0000] (shown as 4 x 32-bit words from MSB to LSB) is split into 4 parallel memory requests: port 0 gets address 0x1000 and data 0x0000_2222, port 1 gets address 0x1000 and data 0x4444_6666, port 2 gets address 0x1000 and data 0x8888_AAAA, port 3 gets address 0x1000 and data 0xBBBB_CCCC.

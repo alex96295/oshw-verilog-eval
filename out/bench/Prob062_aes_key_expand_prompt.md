@@ -1,0 +1,81 @@
+Design a module called TopModule. This module generates the next round key from a current round key and a round number, supporting the AES key schedule for 128-bit, 192-bit, and 256-bit keys in both forward and inverse key derivation.
+
+## Overview
+
+TopModule implements the AES key expansion operation, consuming the current round key (or partial round key) and a round index, and producing the next round key. The module supports key lengths (AES-128, AES-192, AES-256) and two operation modes: forward key expansion (encryption) and inverse key expansion (decryption key schedule). The operation is fully combinational, and the module may be used in a sequential architecture that clocks in key state after each expansion step.
+
+## Parameters
+
+| Parameter | Meaning | Constraint |
+|-----------|---------|------------|
+| `AES192Enable` | Enable support for AES-192. If 0, only AES-128/256 are available. | bit, default 1. |
+| `SecMasking` | Enable second-order masking (DOM) of state. If 1, key input/output are 2-share arrays. | bit, default 0. |
+| `SecSBoxImpl` | S-box implementation variant (LUT or Canright). | enum, default SBoxImplLut. |
+| `NumShares` | Derived: 2 if SecMasking else 1. | int, read-only. |
+
+## Interface
+
+| Port          | Direction | Width / Type | Description |
+|---------------|-----------|--------------|-------------|
+| `clk_i`       | input     | 1            | Clock. Used for control signals and round counter; key expansion itself is combinational. |
+| `rst_ni`      | input     | 1            | Async active-low reset. |
+| `cfg_valid_i` | input     | 1            | Configuration validity signal (unused in basic operation). |
+| `op_i`        | input     | 2 (enum)     | Operation: `CIPH_FWD` = forward (encryption), `CIPH_INV` = inverse (decryption). |
+| `en_i`        | input     | SP2V (2 bits) | Enable (sparse encoded); `SP2V_HIGH` allows operation. |
+| `prd_we_i`    | input     | 1            | PRNG write-enable; used for masking entropy (unused if SecMasking=0). |
+| `out_req_o`   | output    | SP2V (2 bits) | Output request; sparse-encoded ready/valid. |
+| `out_ack_i`   | input     | SP2V (2 bits) | Output acknowledge; permits latching of result. |
+| `clear_i`     | input     | 1            | Clear/reset flag: when asserted, initializes rcon (round constant) and key registers. |
+| `round_i`     | input     | 4            | Round number (0–13 typical, larger supported). Determines the round constant and key derivation path. |
+| `key_len_i`   | input     | 3 (enum)     | Key length: `AES_128`, `AES_192`, `AES_256`. Ignored if AES192Enable=0. |
+| `key_i`       | input     | [7:0][31:0] × NumShares | Input round key (or partial key for sequential stages). 8 words of 32 bits each; if NumShares=2, array of two shares. |
+| `key_o`       | output    | [7:0][31:0] × NumShares | Output round key (next round key). Same format as key_i. |
+| `prd_i`       | input     | 32 (4×8 bits) | Pseudo-random data for masking (if SecMasking=1); otherwise unused. |
+| `err_o`       | output    | 1            | Error flag: asserted if an internal error (e.g., invalid FSM state) is detected. |
+
+## Timing & Control
+
+- **Handshake protocol:** This module uses a ready/valid sparse-encoded handshake. When `en_i` is high (enabled), the module asserts `out_req_o` to signal that a new key is available on `key_o`. Software or external logic must assert `out_ack_i` to acknowledge. The module does not accept new round indexes until the current round is acknowledged.
+- **Clocked behavior:** The round counter, rcon register, and any intermediate state are clocked. The core key expansion combinational logic is updated continuously based on current round and key inputs.
+- **Clear & reset:** On power-up or when `clear_i` is asserted, the rcon is initialized to its starting value (0x01 for forward, 0x36 for AES-128 inverse, etc., depending on `op_i` and `key_len_i`).
+
+## Parameters in operation
+
+- **Key length (key_len_i).**
+  - `AES_128` (3'b001): 128-bit key, 10 rounds (round 0..10 produces keys for round 0..10 of cipher).
+  - `AES_192` (3'b010): 192-bit key, 12 rounds. (Requires AES192Enable=1; otherwise undefined.)
+  - `AES_256` (3'b100): 256-bit key, 14 rounds.
+
+- **Operation mode (op_i):**
+  - `CIPH_FWD`: Forward key expansion. Each round expands the key forward; used for encryption.
+  - `CIPH_INV`: Inverse key expansion. Key schedule is computed in inverse order (used for equivalent inverse cipher decryption).
+
+- **Round index (round_i).** Typically 0 to key_len_dependent_max (10, 12, or 14). At each round, the rcon constant is advanced (multiplied by 2 in GF(2^8) for forward, divided by 2 for inverse). The key words are updated according to the AES key schedule rules.
+
+## Behavioral requirements
+
+- **AES key schedule conformance.** The output key_o must match the AES standard key schedule at the specified round for the given operation mode, key length, and round index. Specifically:
+  - Forward encryption: keys[round] is the round key for round `round` of AES encryption (SubBytes, ShiftRows, MixColumns, AddRoundKey applied 10/12/14 times with these keys).
+  - Inverse decryption: keys are derived by the equivalent inverse cipher method (or inverse key schedule), such that equivalent inverse cipher operations produce the same plaintext/ciphertext transformation.
+
+- **Round constant (rcon).** The rcon is maintained internally and updated on each acknowledged round. For forward, rcon advances by multiply-by-2 in GF(2^8); for inverse, it divides by 2. The first rcon value (at `clear_i`) depends on op_i and key_len_i (e.g., 0x01 for forward AES-128).
+
+- **Masking.** If SecMasking=1, the key is secret-shared into two shares (NumShares=2). The module must maintain the shares independently and apply the same operations to each share, XORing with mask values from prd_i as needed. The external interface reveals only the shares, not the secrets; the protocol ensures that the key is never revealed unmasked to external logic.
+
+- **Handshake protocol.** The module asserts `out_req_o` when a key is ready. It must be held until `out_ack_i` is asserted. Only after acknowledgment may the next round begin. `err_o` should be asserted if the handshake protocol is violated (e.g., a new round starts before the prior one is acknowledged, or control FSM enters an invalid state).
+
+- **Error signaling.** The `err_o` output flags data integrity errors (e.g., FSM sparse encoding violations, inconsistent control). It does not necessarily halt operation but alerts firmware to fault conditions.
+
+## Clock domain
+
+Single clock domain. All synchronous updates driven by `clk_i` (rising edge); asynchronous reset by `rst_ni` (active-low).
+
+## Example
+
+| Scenario                     | Input Key | Round | Key Len | Op | Output Key | Notes |
+|------------------------------|-----------|-------|---------|----|-----------------------|-------|
+| AES-128 forward, round 0 | 0x2b7e151628aed2a6abf7158809cf4f3c | 0 | AES_128 | FWD | 0xa0fafe1788542cb123a33939fc2dc471 | First round expansion |
+| AES-128 forward, round 1 | 0xa0fafe1788542cb123a33939fc2dc471 | 1 | AES_128 | FWD | 0xf27d8c89c04e3e1f578a2cae2efbb48f | Rcon advanced to 0x02 |
+| AES-256 forward, round 0 | 0x603deb1015ca71be2b73aef0857d77811f352c073b6108d72d9cd61ddecb5106... | 0 | AES_256 | FWD | (derived) | 256-bit variant, higher round count |
+
+Constraints: round_i must be in valid range for the selected key_len_i; AES_192 requires AES192Enable=1.

@@ -1,0 +1,118 @@
+Design a module called TopModule. This module is a pseudo-random response generator for AXI4 transactions, driven by an LFSR (Linear Feedback Shift Register), used for testing and stimulus generation.
+
+Overview
+
+TopModule acts as a stimulus generator or response sink for AXI4 bus testing. It contains an LFSR that generates pseudo-random sequences which drive address, write data, or responses on an AXI4 interface. Alternatively, it may be used as a response generator that replies to incoming requests with deterministic pseudo-random data and response codes, allowing repeatable but varied test scenarios without external traffic generation.
+
+Parameters
+
+  Parameter   Meaning   Constraint  
+ ----------- --------- ------------ 
+  AxiIdWidth   Width of the AXI4 ID field, in bits.   ≥ 1.  
+  AxiAddrWidth   Width of the AXI4 address field, in bits.   ≥ 1.  
+  AxiDataWidth   Width of the AXI4 data field, in bits.   ≥ 8.  
+  LfsrWidth   Width of the LFSR, in bits.   ≥ 4; determines the period of randomness.  
+  aw_chan_t, w_chan_t, b_chan_t, ar_chan_t, r_chan_t   Struct types for AXI4 channels.   User-supplied.  
+  LfsrSeed   Initial seed value for the LFSR.   Positive integer.  
+
+Interface
+
+Clock and Reset
+- clk_i: input, clock.
+- rst_ni: input, active-low asynchronous reset.
+
+Control Signals
+- enable_i: input, logic. Enable LFSR advancement. When asserted, the LFSR state updates on each clock cycle.
+- seed_i: input, logic [LfsrWidth-1:0]. New seed value for re-initialization (applied when seed_valid_i is asserted).
+- seed_valid_i: input, logic. When asserted along with seed_i, resets the LFSR to the provided seed.
+
+Stimulus / Response Interface (Example: Address Generation)
+
+One of several possible configurations; the actual instantiation determines which channels are driven. Example shown here:
+
+As a Master (Stimulus Generator):
+
+- aw_chan_o: output, aw_chan_t. Auto-generated address write requests.
+- aw_valid_o: output, logic. Valid flag for generated requests.
+- aw_ready_i: input, logic. Ready flag from slave.
+
+- ar_chan_o: output, ar_chan_t. Auto-generated address read requests.
+- ar_valid_o: output, logic. Valid flag for generated requests.
+- ar_ready_i: input, logic. Ready flag from slave.
+
+- w_chan_o: output, w_chan_t. Auto-generated write data.
+- w_valid_o: output, logic. Valid flag for generated data.
+- w_ready_i: input, logic. Ready flag from slave.
+
+- b_chan_i: input, b_chan_t. Write responses from slave (may be ignored or monitored).
+- b_valid_i: input, logic. Valid flag for write responses.
+- b_ready_o: output, logic. Ready flag for write responses.
+
+- r_chan_i: input, r_chan_t. Read responses from slave (may be ignored or monitored).
+- r_valid_i: input, logic. Valid flag for read responses.
+- r_ready_o: output, logic. Ready flag for read responses.
+
+As a Slave (Response Generator):
+
+Alternatively, when used as a stimulus responder:
+
+- aw_chan_i: input, aw_chan_t. Incoming address write requests.
+- aw_valid_i: input, logic. Valid flag for incoming requests.
+- aw_ready_o: output, logic. Ready flag (generated).
+
+- ar_chan_i: input, ar_chan_t. Incoming address read requests.
+- ar_valid_i: input, logic. Valid flag for incoming requests.
+- ar_ready_o: output, logic. Ready flag (generated).
+
+- w_chan_i: input, w_chan_t. Incoming write data.
+- w_valid_i: input, logic. Valid flag for data.
+- w_ready_o: output, logic. Ready flag (generated).
+
+- b_chan_o: output, b_chan_t. Auto-generated write responses.
+- b_valid_o: output, logic. Valid flag for responses.
+- b_ready_i: input, logic. Ready flag from master.
+
+- r_chan_o: output, r_chan_t. Auto-generated read responses.
+- r_valid_o: output, logic. Valid flag for responses.
+- r_ready_i: input, logic. Ready flag from master.
+
+Behavioral Requirements
+
+- LFSR State Machine. The module implements a Galois or Fibonacci LFSR with feedback taps defined by LfsrWidth. On each clock when enable_i is asserted, the LFSR advances to the next state. The sequence is pseudo-random and deterministic given an initial seed.
+
+- Data Generation. All channel payloads (address, data, ID, control signals) are derived from the LFSR state or its shifted variants:
+  - AW/AR address is generated from LFSR bits (possibly aligned to address boundaries).
+  - W data is generated from LFSR outputs.
+  - IDs are generated from lower bits of LFSR state.
+  - Length, size, burst, and response codes are derived from LFSR bits.
+
+- Valid Signal Generation. When used as a stimulus master, the module generates valid signals based on LFSR output or a programmable pattern, allowing for varied handshaking scenarios (e.g., valid for 2 cycles, then stall for 1 cycle).
+
+- Ready Signal Generation. When used as a stimulus slave, the module generates ready signals based on LFSR output, simulating varied slave response latencies.
+
+- Deterministic Repeatability. Given the same initial seed (seed_i), the module generates the same sequence of transactions, enabling repeatable test scenarios.
+
+- Reset. On release from reset (rst_ni assertion), the LFSR is initialized to LfsrSeed (or a fixed default), all output channels are cleared (valid = 0), and the module is ready to begin stimulus generation.
+
+- Enable Control. When enable_i is deasserted, the LFSR state does not advance; outputs may remain stable or continue driven based on configuration.
+
+Throughput and Latency
+
+- Throughput: One LFSR-generated transaction per clock cycle (if enabled and ready signals permit), or as configured.
+- Latency: Combinational generation of addresses and data from LFSR state.
+
+Clock and Reset Domains
+
+- All ports operate in the same clk_i domain.
+- Reset is asynchronous (rst_ni, active low).
+
+Example Behavior
+
+With LfsrWidth = 8, LfsrSeed = 8'hAC:
+
+1. Cycle 0: LFSR state = 8'hAC, generates AW request with address 0xAC0 (or offset by alignment), ID bits from LFSR.
+2. Cycle 1: LFSR state advances, generates next AW or AR request.
+3. At any time, seed_valid_i = 1 and seed_i = 8'h42 reinitializes LFSR to 8'h42.
+4. Sequence repeats from that seed deterministically.
+
+The module is useful for automated testing, Monte Carlo verification, and stimulus generation without manual test harnesses.

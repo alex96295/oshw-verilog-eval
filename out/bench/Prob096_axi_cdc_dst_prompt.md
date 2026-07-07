@@ -1,0 +1,89 @@
+Design a module called TopModule. This module is the destination-clock side of a dual-clock AXI4
+clock-domain crossing (CDC) FIFO. It accepts AXI4 transactions asynchronously from the source clock
+domain and presents them synchronously to the destination clock domain, with handshake logic managing
+the clock-crossing boundary.
+
+## Overview
+
+TopModule is one half of a complete AXI4 CDC bridge. It receives pre-synchronized request/response
+signals from a source-side counterpart and presents them on the destination-clock interface. Internally,
+the module contains CDC FIFOs (one per channel: AW, W, B, AR, R) that buffer transactions crossing from
+the source to the destination clock domain. Each FIFO is implemented with Gray-code pointer synchronizers
+to safely cross the clock boundary. This module validates that CDC FIFOs have been correctly filled by
+the source-side partner and that data is available before asserting valid signals to the downstream
+destination master.
+
+## Parameters
+
+| Parameter | Meaning |
+|-----------|---------|
+| `aw_chan_t` | Struct type for the AXI write-address channel. |
+| `w_chan_t` | Struct type for the AXI write-data channel. |
+| `b_chan_t` | Struct type for the AXI write-response channel. |
+| `ar_chan_t` | Struct type for the AXI read-address channel. |
+| `r_chan_t` | Struct type for the AXI read-data channel. |
+| `axi_req_t` | Struct type defining the complete AXI request. |
+| `axi_resp_t` | Struct type defining the complete AXI response. |
+| `LogDepth` | Log base 2 of the FIFO depth per channel. Depth = 2^LogDepth. Typical values: 1 to 4. |
+| `SyncStages` | Number of flip-flop stages in the Gray-code pointer synchronizers. Typical value: 2. |
+
+## Interface
+
+| Port | Direction | Type | Description |
+|------|-----------|------|-------------|
+| `dst_clk_i` | input | logic | Clock signal for the destination clock domain. |
+| `dst_rst_ni` | input | logic | Asynchronous active-low reset, synchronous to `dst_clk_i`. |
+| `dst_req_o` | output | `axi_req_t` | AXI4 request presented to the downstream destination master, synchronized to `dst_clk_i`. Carries AW, W, and AR channels as available. |
+| `dst_resp_i` | input | `axi_resp_t` | AXI4 response from the destination master, synchronized to `dst_clk_i`. Carries B and R channels. |
+
+The module does not expose the asynchronous FIFO internals directly; those are connected to the
+source-side partner off-chip or via a separate CDC bridge module.
+
+## Behavioral requirements
+
+- **Destination-clock synchronization.** All outputs (`dst_req_o` valid/ready flags, data) are
+  synchronized to the rising edge of `dst_clk_i`. No combinational paths cross the clock boundary.
+
+- **FIFO availability tracking.** The module tracks the Gray-coded write and read pointers of each
+  CDC FIFO (synchronized via flip-flop stages). When the synchronized read pointer does not equal
+  the internal write pointer, data is available. The module asserts `dst_req_o.*.valid` only when
+  the corresponding FIFO has data.
+
+- **Per-channel valid/ready.** Each AXI channel (AW, W, AR) has independent valid/ready signals.
+  Backpressure on any channel is handled locally; a blocked AW does not block W or AR.
+
+- **Response feedback to source.** Responses from the destination master (`dst_resp_i.*.ready`) are
+  fed back to the source-side FIFOs to advance their pointers, allowing the source to send more data.
+
+- **Data presentation.** When a FIFO has data (synchronized empty flag = 0), the output data bus
+  (`dst_req_o.*_chan`) carries the oldest entry in that FIFO's queue.
+
+- **Read-pointer management.** As the destination master accepts transactions (valid & ready),
+  the module advances the read pointer of the corresponding FIFO, allowing new data to be read.
+
+- **Reset behavior.** On assertion of `dst_rst_ni`, all internal pointers and FIFOs are reset to empty.
+  After reset, the module waits for the source side to populate FIFOs before asserting any valid signals.
+
+- **Clock-domain independence.** The destination clock may be a different frequency, phase, or entirely
+  asynchronous with respect to the source clock. The Gray-code synchronizers ensure no metastability
+  risk.
+
+## Clock domains
+
+- **Source domain** (not directly visible in this module): Managed by the source-side partner. Data
+  is written asynchronously into shared FIFO arrays.
+- **Destination domain** (`dst_clk_i`, `dst_rst_ni`): All outputs and internal state are synchronous
+  to this clock.
+
+## Example behavior
+
+1. **CDC FIFO with data.** Source side has written an AW transaction into the shared AW FIFO.
+   The Gray-code write pointer has been synchronized to the destination clock.
+   - `dst_req_o.aw_valid` asserts.
+   - `dst_req_o.aw_chan` presents the buffered address data.
+   - Destination master accepts it: `dst_resp_i.aw_ready` asserts.
+   - Module increments its read pointer. On the next clock, if no new data has arrived, `aw_valid` deasserts.
+
+2. **Backpressure.** Destination master cannot accept data: `dst_resp_i.*.ready` stays low.
+   - `dst_req_o.*.valid` remains asserted (valid data is present).
+   - Source-side read pointer does not advance, holding the transaction in the FIFO.

@@ -1,0 +1,94 @@
+Design a module called TopModule. This module is an SRAM controller: it manages access to embedded
+SRAM with transparent scrambling and integrity protection, handles keys and nonces from OTP, and gates
+access based on lifecycle state.
+
+Overview
+
+TopModule is an advanced SRAM controller supporting multiple instances of embedded SRAM with built-in
+security features. It provides transparent encryption/decryption of data using PRINCE cipher with
+supplied keys and nonces from the OTP macro. The module verifies data integrity using error-correcting
+codes (ECC) and reports errors. It includes a separate register-based control interface for configuration
+and a memory-mapped interface for SRAM read/write access. The module operates with dual clocks (main
+and OTP), has lifecycle-gating for initialization and debug access, and supports RACL policies for
+register protection. It tracks initialization state via a counter and permits execution-in-place (XIP)
+when initialized and lifecycle permits.
+
+Parameters
+
+  Parameter   Meaning   Constraint  
+ ----------- --------- ------------ 
+  MemSizeRam   Total SRAM size in bytes.   Typical: 0x1000 (4 KB).  
+  InstSize   Instantiated SRAM size per instance.   Typical: equal to MemSizeRam; must be multiple of word width.  
+  NumRamInst   Number of SRAM instances.   Typical: 1; can be > 1 for multi-bank designs.  
+  AlertAsyncOn   Alert asynchronous enable mask.   Width NumAlerts.  
+  AlertSkewCycles   Clock cycles of alert timing skew.   Typical: 1.  
+  InstrExec   Enable instruction execution from SRAM.   0 = data only, 1 = permit execution.  
+  NumPrinceRoundsHalf   Half-rounds in PRINCE cipher.   Typical: 3 (6 full rounds).  
+  Outstanding   Max outstanding memory transactions.   Typical: 2.  
+  EccCorrection   Enable single-error correction.   0 = detection only, 1 = correction.  
+  EnableRacl   Enable role-based access control.   0 = disabled, 1 = enabled.  
+  RaclErrorRsp   RACL error response mode.   Defaults to EnableRacl.  
+  RaclPolicySelVecRegs   RACL policies for registers.   Array per register.  
+  RaclPolicySelNumRangesRam   Number of RACL ranges for RAM.   Typical: 1 (no protection) or > 1 (partitioned).  
+  RndCnstSramKey   Constant SRAM key for PRINCE.   128-bit constant from design.  
+  RndCnstSramNonce   Constant SRAM nonce.   64-bit constant from design.  
+  RndCnstLfsrSeed   Constant LFSR seed.   For initialization counter.  
+  RndCnstLfsrPerm   Constant LFSR permutation.   For random address scrambling during init.  
+
+Interface
+
+  Port   Direction   Width   Description  
+ ------ ----------- ------- ------------- 
+  clk_i   input   1   Main system clock.  
+  rst_ni   input   1   Active-low reset (main clock domain).  
+  clk_otp_i   input   1   OTP clock (independent domain).  
+  rst_otp_ni   input   1   Active-low reset (OTP clock domain).  
+  ram_tl_i   input   tlul_h2d_t   TileLink host-to-device for SRAM read/write.  
+  ram_tl_o   output   tlul_d2h_t   TileLink device-to-host for SRAM responses.  
+  regs_tl_i   input   tlul_h2d_t   TileLink host-to-device for registers.  
+  regs_tl_o   output   tlul_d2h_t   TileLink device-to-host for register responses.  
+  alert_rx_i   input   alert_rx_t[NumAlerts-1:0]   Alert RX array.  
+  alert_tx_o   output   alert_tx_t[NumAlerts-1:0]   Alert TX array.  
+  racl_policies_i   input   top_racl_pkg::racl_policy_vec_t   Lifecycle role-access policies.  
+  racl_error_o   output   top_racl_pkg::racl_error_log_t   RACL access violation log.  
+  racl_policy_sel_ranges_ram_i   input   top_racl_pkg::racl_range_t[RaclPolicySelNumRangesRam-1:0]   RACL ranges for RAM protection.  
+  lc_escalate_en_i   input   lc_ctrl_pkg::lc_tx_t   Lifecycle escalate enable.  
+  lc_hw_debug_en_i   input   lc_ctrl_pkg::lc_tx_t   Lifecycle HW debug enable.  
+  otp_en_sram_ifetch_i   input   prim_mubi_pkg::mubi8_t   OTP-sourced enable for SRAM instruction fetch.  
+  sram_otp_key_o   output   otp_ctrl_pkg::sram_otp_key_req_t   SRAM key request to OTP.  
+  sram_otp_key_i   input   otp_ctrl_pkg::sram_otp_key_rsp_t   SRAM key response from OTP.  
+  cfg_i   input   prim_ram_1p_pkg::ram_1p_cfg_t[NumRamInst-1:0]   Configuration for each SRAM instance (e.g., power, timing).  
+  cfg_rsp_o   output   prim_ram_1p_pkg::ram_1p_cfg_rsp_t[NumRamInst-1:0]   Configuration response from each instance.  
+  sram_rerror_o   output   sram_ctrl_pkg::sram_error_t   SRAM read error report (ECC syndrome, valid flag).  
+
+Behavioral requirements
+
+- Dual TileLink interfaces. TopModule exposes two independent TileLink register buses: one for SRAM memory access (ram_tl_i/ram_tl_o) and one for control registers (regs_tl_i/regs_tl_o). They operate in the main clock domain with independent ready/valid handshaking.
+
+- Transparent encryption/decryption. All SRAM data is encrypted at write time and decrypted at read time using PRINCE cipher in counter (CTR) mode. The key comes from the OTP via a request/response interface; the nonce is derived from the address and design constants.
+
+- ECC/integrity protection. Each SRAM word includes an ECC code computed during write. On read, the ECC is checked and reported in sram_rerror_o. If EccCorrection = 1, single-bit errors are silently corrected; if 0, all errors are reported and data is likely corrupted.
+
+- Key management. The module requests keys and nonces from the OTP via sram_otp_key_o and receives them on sram_otp_key_i. The request includes key version and purpose; responses include the key and validity. Keys are stored internally and used for encryption.
+
+- Lifecycle gating. The lc_escalate_en_i, lc_hw_debug_en_i, and otp_en_sram_ifetch_i inputs control whether certain operations (e.g., initialization, instruction fetch) are permitted. Denied access results in error responses.
+
+- Initialization flow. On reset or lifecycle change, the SRAM must be initialized to remove data remnants. This is performed by writing a random or zero pattern to all addresses using a pseudo-random address sequence. An initialization counter (in register space) tracks progress and is disabled once complete.
+
+- Multiple instances and RACL. When NumRamInst > 1, the module can address multiple separate SRAM banks. The cfg_i array configures each instance independently. The racl_policy_sel_ranges_ram_i input allows partitioning RAM address ranges with different access policies.
+
+- Error reporting. Read errors (detected via ECC) are logged in sram_rerror_o with syndrome and valid flag. Alerts are raised for critical errors or policy violations. Register access violations are logged in racl_error_o.
+
+Example
+
+Write and read a 32-bit word with encryption:
+- Write request: address 0x100, data 0xDEADBEEF via ram_tl_i.
+- Controller requests key from OTP, receives 128-bit key + nonce.
+- Data is XOR'd with PRINCE-CTR keystream derived from address 0x100.
+- ECC code is computed on encrypted data.
+- Write completes; SRAM stores encrypted data + ECC.
+- Read request: address 0x100.
+- Encrypted data + ECC is read from SRAM.
+- ECC is verified (no error, or corrected if single-bit error).
+- Data is decrypted using same PRINCE-CTR keystream.
+- Result 0xDEADBEEF is returned to reader.

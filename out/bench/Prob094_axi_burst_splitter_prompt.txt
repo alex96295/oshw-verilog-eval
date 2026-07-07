@@ -1,0 +1,73 @@
+Design a module called TopModule. This module implements an AXI4 burst splitter: it accepts multi-beat
+write bursts and splits them into single-beat bursts, ensuring that each beat becomes an independent
+transaction at the protocol level while preserving ID tracking and response collection.
+
+Overview
+
+TopModule operates on the full AXI4 write path (AW and W channels) and passes read transactions through
+unchanged. It sits between an upstream slave and a downstream master. Each write burst arriving with
+multiple beats (AW.length > 0) is decomposed into N separate single-beat (length=0) write transactions,
+one per original beat. The W channel data is similarly decomposed and paired with each corresponding
+AW transaction. All split transactions share the same ID and carry the original metadata (address, size,
+burst type, and other fields) from the original AW. Write responses from the master are collected per
+original request and merged into a single B response back to the slave.
+
+Parameters
+
+  Parameter   Meaning  
+ ----------- --------- 
+  AxiIdWidth   Width of the AXI ID field.  
+  AxiMaxWriteTxns   Maximum number of concurrent write transactions permitted downstream.  
+  aw_chan_t   Struct type for the AXI write-address channel.  
+  w_chan_t   Struct type for the AXI write-data channel.  
+  b_chan_t   Struct type for the AXI write-response channel.  
+  ar_chan_t   Struct type for the AXI read-address channel.  
+  r_chan_t   Struct type for the AXI read-data channel.  
+  axi_req_t   Struct type defining the complete AXI request.  
+  axi_resp_t   Struct type defining the complete AXI response.  
+
+Interface
+
+  Port   Direction   Type   Description  
+ ------ ----------- ------ ------------- 
+  clk_i   input   logic   Clock signal.  
+  rst_ni   input   logic   Asynchronous active-low reset.  
+  slv_req_i   input   axi_req_t   AXI4 request from upstream slave.  
+  slv_resp_o   output   axi_resp_t   AXI4 response to upstream slave.  
+  mst_req_o   output   axi_req_t   AXI4 request to downstream master.  
+  mst_resp_i   input   axi_resp_t   AXI4 response from downstream master.  
+
+Behavioral requirements
+
+- Beat decomposition. Every write-address transaction with length L (i.e., L+1 beats) is split into
+  L+1 separate single-beat (length=0) AW transactions. Each split AW carries the same metadata (ID, size,
+  burst type, address offset rules) as the original, with address incremented appropriately per AXI
+  burst-type rules (INCR increments, FIXED does not, WRAP wraps within the burst boundary).
+- Write-data decomposition. Each beat on the slave W channel is forwarded as a separate downstream
+  W transaction (with length field implicitly 0 per single-beat semantics). The last flag is set to 1
+  only on the final beat of the original burst (i.e., the last of the N downstream beats).
+- Read pass-through. AR and R channels are passed through with no modification.
+- Response aggregation. Write responses (B channel) from the master are collected. For each original
+  slave write request, the module waits for all N corresponding downstream B responses. A single B
+  response is then sent back to the slave with the original request's ID. The response status code
+  represents the overall result (typically the worst among all splits; logic is implementation-defined
+  but typically SLVERR if any split failed).
+- Backpressure and ordering. The module respects valid/ready handshakes. The slave's W ready signal
+  indicates that the next beat can proceed, gated by the corresponding downstream AW/W availability. The
+  module preserves beat ordering: beats are never reordered or duplicated.
+- Concurrent write tracking. A counter or queue tracks in-flight write transactions (AW accepted,
+  B not yet returned). This is bounded by AxiMaxWriteTxns.
+- Reset behavior. On rst_ni assertion, state resets to accept new transactions.
+
+Clock and reset domains
+
+- Single clock domain: clk_i and rst_ni.
+
+Example behavior
+
+1. 4-beat write burst (AW.length=3). Incoming burst carries 4 beats of write data.
+   - Module generates 4 downstream AW transactions, each with length=0.
+   - Each downstream beat from slave W is forwarded as a separate downstream W transaction (each with implicit length=0).
+   - Module collects 4 B responses from master and merges them into 1 B response for the slave.
+
+2. Single-beat write (AW.length=0). Incoming burst is already single-beat and passes through with minimal latency.

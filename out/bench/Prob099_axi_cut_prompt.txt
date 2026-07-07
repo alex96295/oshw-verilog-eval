@@ -1,0 +1,91 @@
+Design a module called TopModule. This module implements an AXI4 register slice (cut) that breaks
+all combinational paths on all five AXI4 channels. It introduces one cycle of pipeline latency
+in exchange for faster clock frequency.
+
+Overview
+
+TopModule sits between an upstream AXI4 slave and a downstream AXI4 master. On every clock cycle,
+the module samples inputs from both sides and drives outputs via registered values, ensuring no
+combinational logic paths exist from input to output on any channel. This register-slice behavior
+decouples the slave and master interfaces timing-wise, allowing independent clock speeds or
+reduction of critical path delays. All five AXI4 channels (AW write-address, W write-data, B
+write-response, AR read-address, R read-data) are independently registered with separate valid/ready
+handshakes per channel.
+
+Parameters
+
+  Parameter   Meaning  
+ ----------- --------- 
+  aw_chan_t   Struct type for the AXI write-address channel.  
+  w_chan_t   Struct type for the AXI write-data channel.  
+  b_chan_t   Struct type for the AXI write-response channel.  
+  ar_chan_t   Struct type for the AXI read-address channel.  
+  r_chan_t   Struct type for the AXI read-data channel.  
+  axi_req_t   Struct type defining the complete AXI request.  
+  axi_resp_t   Struct type defining the complete AXI response.  
+  BypassAw   If true, bypass the AW register stage for minimal latency (combinational). Default: disabled.  
+  BypassW   If true, bypass the W register stage. Default: disabled.  
+  BypassB   If true, bypass the B register stage. Default: disabled.  
+  BypassAr   If true, bypass the AR register stage. Default: disabled.  
+  BypassR   If true, bypass the R register stage. Default: disabled.  
+  Bypass   If true, bypasses all five channels (overrides individual bypass parameters). Default: disabled.  
+
+Interface
+
+  Port   Direction   Type   Description  
+ ------ ----------- ------ ------------- 
+  clk_i   input   logic   Clock signal. All registered data is captured on the rising edge.  
+  rst_ni   input   logic   Asynchronous active-low reset.  
+  slv_req_i   input   axi_req_t   AXI4 request from the upstream slave, providing AW, W, and AR channels.  
+  slv_resp_o   output   axi_resp_t   AXI4 response to the upstream slave, providing B and R channels and ready signals.  
+  mst_req_o   output   axi_req_t   AXI4 request to the downstream master, sampled and registered from slv_req_i.  
+  mst_resp_i   input   axi_resp_t   AXI4 response from the downstream master, providing B and R channels.  
+
+Behavioral requirements
+
+- Registered interfaces (default). Each AXI4 channel is implemented as a register slice:
+  - On every clock edge, the module captures incoming valid/ready and data signals.
+  - Outputs are driven with the registered values.
+  - This ensures strictly zero combinational paths from inputs to outputs on any channel.
+
+- Independent channel control. Each of the five channels (AW, W, B, AR, R) has independent
+  valid/ready handshaking:
+  - slv_req_i.aw_valid → register → mst_req_o.aw_valid.
+  - mst_resp_i.aw_ready → register → slv_resp_o.aw_ready.
+  - Similarly for W, B, AR, R channels.
+  - Backpressure on one channel does not affect others.
+
+- Data latching. When a channel is valid and the handshake completes (valid & ready), data is
+  captured and latched in the register. On the next cycle, that data is presented on the output.
+
+- Optional bypass per channel. If a bypass parameter is set for a channel, that channel's logic
+  becomes combinational (no register), allowing faster response at the cost of longer combinational paths.
+  The Bypass parameter overrides all individual channel bypasses if set.
+
+- Ready signal management. The _ready signals are typically derived combinationally from the
+  internal register state (is the register empty?) and the downstream ready signal. If a register is
+  empty, ready is asserted to the upstream side to encourage new data. If a register is full and
+  downstream is not ready, upstream is held.
+
+- Throughput. With ideal backpressure (slave and master both able to accept), throughput is one
+  transaction per channel per clock cycle. Latency is one additional cycle per channel when not bypassed.
+
+- Reset behavior. On rst_ni assertion, all internal registers reset (valid flags go low, data
+  is cleared). After reset, all _ready signals are asserted.
+
+Clock and reset domains
+
+- Single clock domain: clk_i and rst_ni.
+
+Example behavior
+
+1. Normal pipelined operation (no bypass). Cycle N: slave sends AW_valid with address A.
+   - Module captures A internally but does not present it immediately to master.
+   - slv_resp_o.aw_ready is asserted (internal register is now full with A).
+   - Cycle N+1: master receives mst_req_o.aw_valid with data A.
+   - If master accepts it, the register drains, and cycle N+2 the next AW can be presented.
+
+2. Bypass enabled. With BypassAw=1'b1, the AW channel is combinational:
+   - slv_req_i.aw_valid drives mst_req_o.aw_valid directly (combinational).
+   - mst_resp_i.aw_ready drives slv_resp_o.aw_ready directly.
+   - Latency is zero, but the combinational path is longer.

@@ -1,0 +1,194 @@
+Design a module called TopModule. This module is a Key Manager with DPE (Device Private Extensions) support, implementing a cryptographic key-derivation state machine that advances through versioned key states via KMAC, manages sideload key outputs, interfaces with lifecycle and OTP for gating, and provides a TL-UL register interface for state control and secret readout.
+
+Overview
+
+TopModule implements a key derivation hierarchy seeded from OTP, using KMAC (Keccak Message Authentication Code) as the core KDF primitive. It maintains an internal state encoding the current derivation level (e.g., root, intermediate, working keys) and responds to register-driven commands to advance to the next state, producing sideload keys for cryptographic blocks (AES, OTBN, KMAC). The module is lifecycle-gated (only operational in DEV/PROD states), implements DPE extensions for device-specific context inclusion, and provides both hardware sideload key outputs and software-readable registers for key material.
+
+Parameters
+
+  Parameter   Meaning  
+ ----------- --------- 
+  AlertAsyncOn   Per-alert async/sync mode.  
+  AlertSkewCycles   Alert propagation delay.  
+  KmacEnMasking   Enable masking in KMAC for side-channel resistance.  
+  RndCnstLfsrSeed, RndCnstLfsrPerm, RndCnstRandPerm   Random constants for LFSR and permutation (masking/scrambling).  
+  RndCnstRevisionSeed, RndCnstSoftOutputSeed, RndCnstHardOutputSeed   Seeds for key derivation (soft keys, hard keys, revision tracking).  
+  RndCnstAesSeed, RndCnstOtbnSeed, RndCnstKmacSeed, RndCnstNoneSeed   Cipher-specific derivation seeds.  
+
+(Note: These parameters are security-critical and usually set to random compile-time constants.)
+
+Interface
+
+Clocks & Resets
+- clk_i, rst_ni: Main clock and active-low asynchronous reset.
+- rst_shadowed_ni: Shadow reset for redundant state protection.
+- clk_edn_i, rst_edn_ni: EDN (Entropy Distribution Network) clock and reset (for entropy to KMAC).
+
+TL-UL Register Bus
+- tl_i (input): TL-UL host-to-device request (32-bit address, 32-bit data).
+- tl_o (output): TL-UL device-to-host response (32-bit read data, valid, error).
+
+Registers control key derivation state, sideload output configuration, and allow software to read/write certain key material and status.
+
+Hardware Sideload Key Outputs
+- aes_key_o (output): AES key structure (valid flag, key material, ready flag).
+- kmac_key_o (output): KMAC key structure (valid flag, key material, ready flag).
+- otbn_key_o (output): OTBN key structure (valid flag, key material, ready flag).
+
+These are typically 256-bit keys + control signals; keys remain stable until explicitly updated via a state advancement command.
+
+KMAC Data Interface
+- kmac_data_o (output): Request to KMAC (message, length, mode).
+- kmac_data_i (input): Response from KMAC (digest, valid flag, status).
+
+Handshake protocol: TopModule requests a KDF operation (hash of state    personalization), KMAC computes and returns the result asynchronously.
+
+Entropy & Lifecycle Gating
+- lc_keymgr_en_i (input): Lifecycle signal; key manager is enabled only if asserted (DEV/PROD states).
+- lc_keymgr_div_i (input): Lifecycle diversifier for key derivation (depends on current LC state).
+- otp_key_i (input): Root key material from OTP (256-bit seed).
+- otp_device_id_i (input): Device ID from OTP (for personalization).
+
+EDN Entropy Request
+- edn_o (output): Request to Entropy Distribution Network (edn_req, address, etc.).
+- edn_i (input): Response from EDN (edn_ack, edn_bus with entropy data, FIPS indicator).
+
+Used to source randomness for reseed operations (if supported) and masking.
+
+ROM Digest Inputs
+- rom_digest_i[NumRomDigestInputs-1:0] (input): ROM revision hashes from ROM controller; included in key derivation for content-binding.
+
+Ensures keys are bound to current ROM; different ROM versions get different keys.
+
+Interrupts & Alerts
+- intr_op_done_o (output): Interrupt asserted when a key derivation operation completes.
+- alert_tx_o[NumAlerts-1:0] (output): Alert transmit (differential; typically recovery and fatal alerts).
+- alert_rx_i[NumAlerts-1:0] (input): Alert acknowledge/ping.
+
+Control & Status Registers
+
+- OPERATION: Selects the next key derivation state (e.g., from root to creator, creator to owner, owner to working, etc.).
+- CONTROL: Enables/disables sideload key output, selects whether to include ROM digest in derivation.
+- STATUS: Current state (read-only; e.g., IDLE, BUSY, DONE), sideload valid/ready flags.
+- KEY_VERSION: Current key version (incremented on major state transitions).
+- MAX_ALLOWED_CALLS (per state): Configurable; limits how many times a working key can be used before re-derivation is required.
+- CALL_COUNT (per state): Current usage count; asserted when reaching MAX_ALLOWED_CALLS.
+- KEYS[i] (read-only): Software-accessible key material for selected states (if not restricted by lifecycle).
+
+Behavioral Requirements
+
+Key Derivation State Machine
+
+TopModule implements a multi-level key hierarchy:
+
+1. Root State: Seeded from otp_key_i (OTP root key). Not accessible via sideload; only used internally.
+2. Intermediate States (e.g., Creator, Owner, Working, etc.): Derived from parent state by KMAC(parent_key, personalization).
+3. Working Keys (soft/hard output): Final keys for use by cryptographic blocks.
+
+State transitions are one-way (forward only, for security):
+- Root -> Creator -> Owner -> Working_State_1 -> Working_State_2 -> ... -> Disable
+
+Derivation Algorithm (DPE-inspired)
+For each state transition:
+1. TopModule asserts kmac_data_o with:
+   - Input: parent_key    state_id    ROM_digest    device_id    lc_div    counter.
+   - Mode: KMAC256 (or SHA3-256).
+   - Length: Output key material length (e.g., 256 bits for AES key).
+2. KMAC computes the hash and returns the result.
+3. TopModule stores the result as the new state key.
+4. TopModule derives sideload keys for AES, KMAC, OTBN using separate KDF with cipher-specific personalization.
+
+Sideload Output
+- Sideload keys are derived from working keys using KMAC(working_key, cipher_id).
+- For AES: KMAC(working_key, "AES") -> 256-bit AES key.
+- For KMAC: KMAC(working_key, "KMAC") -> 256-bit KMAC key.
+- For OTBN: KMAC(working_key, "OTBN") -> 256-bit OTBN key.
+- Sideload keys are valid (aes_key_o.valid = 1) after successful derivation and remain valid until the next state transition.
+- Sideload keys are never directly readable by software (routed via hardware-only paths to crypto blocks).
+
+Soft vs. Hard Output
+- Hard Output: Sideload keys (e.g., aes_key_o) are "hard" and not readable by software.
+- Soft Output: Selected key material can be written to software-accessible registers under lifecycle restrictions. DEV state allows full software read/write; PROD restricts or disables software key read.
+
+Lifecycle Gating
+- Disabled (lc_keymgr_en_i = OFF): Key manager does not operate; sideload keys are all zeros, SW read returns zeros. No state transitions allowed.
+- DEV: Full operation; software can read/write working keys, change states, export keys.
+- PROD: Restricted; software can request key derivation but cannot read sensitive working keys. Sideload keys are available to crypto blocks.
+- RMA: Enables export of keys for diagnostic/rework (handled separately via RMA-specific derivation).
+
+Call Counter & Usage Limits
+- For each working state, software can set MAX_ALLOWED_CALLS (typical: 2^32, unlimited).
+- TopModule increments CALL_COUNT on each sideload key request (i.e., each time a crypto block reads the key).
+- When CALL_COUNT >= MAX_ALLOWED_CALLS, the sideload key is invalidated; crypto blocks receive all-zeros.
+- Software must transition to a new working state to continue.
+
+ROM Digest Binding
+- If CONTROL.bind_to_rom is set, the current ROM revision digest is included in the key derivation:
+  - KDF input: parent_key    state_id    ROM_digest    device_id    lc_div.
+  - Different ROMs produce different keys, preventing key portability across ROM versions.
+- If bind_to_rom = 0, ROM digest is set to zeros; keys are ROM-agnostic.
+
+Advanced: DPE Diversification
+DPE (Device Private Extensions) adds per-device, per-execution-context diversification:
+- Device ID (serial number) is included in KDF input.
+- Lifecycle diversifier (lc_keymgr_div_i, set by LC controller) varies per device and per LC state.
+- Time-based or counter-based diversifiers can be added to prevent key reuse across different activations.
+
+Reset & Initialization
+- On reset, all state is cleared.
+- Sideload keys are invalidated (set to zero vectors).
+- Software-accessible registers are reset to defaults.
+- On next clock edge, TopModule re-locks to the OTP root key and enters the root state.
+
+State Advancement
+1. Software writes the target state to OPERATION register.
+2. Software optionally writes additional configuration (ROM binding, call limit).
+3. Software asserts a "generate" command (via CONTROL or implicit).
+4. TopModule requests KMAC to compute the new key.
+5. KMAC returns result (after 10s to 100s of cycles, depending on implementation).
+6. TopModule asserts intr_op_done_o and updates STATUS to DONE.
+7. Software reads STATUS to confirm completion.
+8. Sideload keys are automatically updated for AES, KMAC, OTBN.
+
+Error & Exception Handling
+- Invalid State Transition: Attempt to go backward or to an undefined state. Asserts recovery alert; state reverts.
+- KMAC Timeout: KDF operation does not complete within timeout. Fatal alert; sideload keys invalidated.
+- Lifecycle Gating Violation: Attempt to enable key manager while lc_keymgr_en_i is off. Noop; no state change.
+- Shadow Register Mismatch: If shadowed state registers detect corruption, fatal alert.
+- Call Counter Saturation: When CALL_COUNT reaches MAX_ALLOWED_CALLS, sideload keys are zeroed and an alert may be asserted.
+
+Boundary Parameters & Constraints
+- Key Material Size: Typically 256 bits for all keys (AES, KMAC, OTBN).
+- State Identifier Width: Typically 8-16 bits (encodes the position in the derivation hierarchy).
+- Device ID: Typically 256 bits (SHA3 hash of device serial, etc.).
+- ROM Digest: Typically 256 bits (SHA3 hash of ROM content).
+- LC Diversifier: Typically 32-256 bits (varies per device and LC state).
+- Call Counter: Typically 64 bits; can support up to 2^64 key uses.
+
+Synchronization & Timing
+- All logic is synchronous to clk_i.
+- KMAC is asynchronous (operates in its own clock domain); result is synchronized back via valid/ready handshake.
+- EDN entropy is also asynchronous; synchronized to clk_i.
+- Sideload key outputs are combinational (stable during each cycle) but updated synchronously when new keys are derived.
+
+Example Scenario
+
+1. On power-up, TopModule loads OTP root key and initializes to the root state.
+2. Software reads STATUS; sees state = ROOT.
+3. Software writes OPERATION = CREATOR (advance to creator state).
+4. Software writes CONTROL.start = 1.
+5. TopModule asserts kmac_data_o with KDF input (root_key    CREATOR_ID    0    device_id    lc_div).
+6. KMAC computes hash, returns result (50 cycles later).
+7. TopModule stores result as the creator key and derives sideload keys.
+8. TopModule asserts intr_op_done_o.
+9. Software reads STATUS; sees state = CREATOR and sideload_valid = 1.
+10. Crypto blocks (AES, KMAC) sample the sideload key outputs and use them for encryption/MAC operations.
+11. Each use of a sideload key increments the call counter.
+12. After 2^32 uses, the call counter saturates; sideload keys are zeroed.
+13. Software must advance to a new working state (e.g., OWNER -> WORKING_1) to get fresh keys.
+
+Security Notes
+- Key Isolation: Sideload keys are never accessible to software; cryptographic blocks access keys via dedicated wiring only.
+- Masking: The module supports boolean masking to resist differential power analysis (DPA). Masking is applied inside KMAC and sideload key generation.
+- State Binding: Keys are bound to device identity (serial number), ROM version, and lifecycle state, preventing key portability.
+- Forward Secrecy: State transitions are one-way; previous states cannot be recovered from the current key.

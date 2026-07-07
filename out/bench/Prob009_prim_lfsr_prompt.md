@@ -1,0 +1,86 @@
+Design a module called TopModule. This module is a linear feedback shift register (LFSR) that generates pseudorandom sequences with configurable tap structure, entropy injection, and state output.
+
+## Overview
+
+TopModule implements a configurable Galois or Fibonacci-style LFSR with support for custom feedback coefficients, entropy injection, and permuted state output. The LFSR can be seeded, advanced using injected entropy, and configured for maximum-length sequences. The module provides a multi-bit state output that can be permuted and filtered for quality pseudorandom bit generation.
+
+## Parameters
+
+| Parameter | Meaning | Default |
+|-----------|---------|---------|
+| `LfsrType` | Type of LFSR: "GAL_XOR" (Galois/XOR) or "FIB_XNOR" (Fibonacci/XNOR). | "GAL_XOR" |
+| `LfsrDw` | Width of the LFSR internal state, in bits. | 32 |
+| `EntropyDw` | Width of external entropy input, in bits. | 8 |
+| `StateOutDw` | Width of the state output, in bits. | 8 |
+| `DefaultSeed` | Initial seed value for the LFSR (used on reset). | 1 |
+| `CustomCoeffs` | Custom feedback tap coefficients (if not using predefined). | 0 |
+| `StatePermEn` | When 1, apply permutation to internal state before output. | 0 |
+| `StatePerm` | Permutation mapping array (bit indices to permute). | — |
+| `MaxLenSVA` | When 1, enable SVA assertions for maximum-length sequences. | 1 |
+| `LockupSVA` | When 1, enable SVA assertions for lockup detection. | 1 |
+| `ExtSeedSVA` | When 1, enable SVA for seed validation. | 1 |
+| `NonLinearOut` | When 1, apply non-linear filtering to output. | 0 |
+
+## Interface
+
+| Port | Direction | Width | Description |
+|------|-----------|-------|-------------|
+| `clk_i` | input | 1 | System clock. |
+| `rst_ni` | input | 1 | Asynchronous active-low reset. |
+| `seed_en_i` | input | 1 | Seed enable: when high, load seed_i into the LFSR state. |
+| `seed_i` | input | LfsrDw | Seed value to load into the LFSR. |
+| `lfsr_en_i` | input | 1 | LFSR enable: when high, advance the LFSR with entropy injection. |
+| `entropy_i` | input | EntropyDw | External entropy to XOR into the LFSR state during advancement. |
+| `state_o` | output | StateOutDw | Output state bits (optionally permuted and filtered). |
+
+## Behavioral requirements
+
+### LFSR Operation
+- The LFSR maintains an internal state of width `LfsrDw`.
+- On reset, the state is initialized to `DefaultSeed`.
+- When `seed_en_i` is high, the state is loaded with `seed_i` on the next clock edge.
+- When `lfsr_en_i` is high, the state advances by one step using the configured feedback taps.
+
+### Feedback Coefficients
+- Standard maximum-length sequences for common widths (e.g., 32-bit Galois: x^32 + x^22 + x^2 + x + 1) are pre-defined.
+- If `CustomCoeffs != 0`, the custom coefficients override the standard ones.
+- Coefficients define which state bits feed back into the XOR/XNOR tree.
+
+### Entropy Injection
+- When advancing (`lfsr_en_i`), the entropy bits are XORed into the feedback calculation.
+- This allows external random sources (e.g., ring oscillators) to enhance entropy quality.
+- Entropy is sampled and injected before the shift operation on the same clock edge.
+
+### State Output
+- `state_o` is derived from the internal state.
+- If `StatePermEn = 1`, the bits are permuted according to `StatePerm` before output.
+- Permutation allows non-sequential bit extraction for output decorrelation.
+- The output width is `StateOutDw`, which may be less than `LfsrDw` (e.g., output 8 bits from a 32-bit LFSR).
+
+### Non-Linear Output (Optional)
+- When `NonLinearOut = 1`, the output bits are passed through a non-linear function (e.g., a lookup table) before assignment to `state_o`.
+- This further reduces correlations and improves statistical properties.
+
+### Lockup Protection
+- If the LFSR ever enters the all-zeros state (certain feedback structures), it is locked and cannot recover (maximum-length sequences exclude all-zeros).
+- Entropy injection helps prevent lockup by continuously introducing new bits.
+- The `LockupSVA` assertion flags if lockup is detected (typically requires external intervention to recover).
+
+### Reset
+- On `rst_ni` assertion (active low), the internal state is reset to `DefaultSeed`.
+- `state_o` reflects the reset value.
+
+## Example
+
+With `LfsrType = "GAL_XOR"`, `LfsrDw = 8`, `DefaultSeed = 1`, `StateOutDw = 8`:
+
+| Cycle | `seed_en_i` | `lfsr_en_i` | `entropy_i` | `state_o` | Notes |
+|-------|---|---|---|---|---|
+| 0 | 0 | 0 | 0 | 0x01 | Initial seed = 0x01 |
+| 1 | 0 | 1 | 0x00 | 0x02 | LFSR advances (simple XOR shift) |
+| 2 | 0 | 1 | 0x00 | 0x04 | Advances again |
+| 3 | 0 | 1 | 0x55 | (shifted + entropy) | Entropy injected |
+| 4 | 1 | 0 | 0 | (custom seed value) | Seed loaded |
+| 5 | 0 | 1 | 0x00 | (next from new seed) | Resume LFSR from new seed |
+
+Exact output depends on feedback polynomial and entropy injection.

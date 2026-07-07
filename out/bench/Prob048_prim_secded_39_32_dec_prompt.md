@@ -1,0 +1,90 @@
+Design a module called TopModule. This module implements a SECDED (single-error-correct, double-error-detect) decoder that recovers the original 32-bit data from a 39-bit codeword and reports error status.
+
+## Overview
+
+TopModule is a combinational error-correction-code (ECC) decoder that takes a 39-bit SECDED codeword (produced by Prob047 encoder or equivalent) and outputs the original 32-bit data with automatic single-bit error correction. It also computes a 7-bit syndrome and produces a 2-bit error flag indicating whether a correctable single error, uncorrectable double error, or no error was detected.
+
+## Parameters
+
+None. The module is fixed at 39-bit input and 32-bit output.
+
+## Interface
+
+TopModule is purely combinational; there is no clock or reset.
+
+| Port | Direction | Width | Description |
+|------|-----------|-------|-------------|
+| `data_i` | input | 39 | Input SECDED codeword: 32 data bits (in positions [31:0]) + 7 parity bits (in positions [38:32]). |
+| `data_o` | output | 32 | Corrected output data: original 32 bits with single-bit errors corrected (if present). |
+| `syndrome_o` | output | 7 | Syndrome bits indicating error position (if any). A syndrome of 0 = no error; non-zero = error at position indicated by syndrome value. |
+| `err_o` | output | 2 | Error status: `err_o[0]` = single correctable error detected; `err_o[1]` = double uncorrectable error detected. |
+
+## Behavioral requirements
+
+- **Codeword structure.** The input `data_i[38:0]` is interpreted as:
+  - Bits [31:0]: Data bits (potentially corrupted).
+  - Bit [32]: Parity bit P0.
+  - Bit [33]: Parity bit P1.
+  - Bit [34]: Parity bit P2.
+  - Bit [35]: Parity bit P3.
+  - Bit [36]: Parity bit P4.
+  - Bit [37]: Parity bit P5.
+  - Bit [38]: Overall parity bit.
+
+- **Syndrome computation.** The decoder computes seven syndrome bits `syndrome_o[6:0]` by recomputing Hamming parities over the received codeword:
+  - `syndrome_o[0]` = XOR of received bits at positions 1, 3, 5, 7, ... (same positions as encoder P0), XORed with received P0.
+  - `syndrome_o[1]` = XOR of received bits at positions 2, 3, 6, 7, ... , XORed with received P1.
+  - `syndrome_o[2]` = XOR of received bits at positions 4, 5, 6, 7, ... , XORed with received P2.
+  - `syndrome_o[3]` = XOR of received bits at positions 8–15, XORed with received P3.
+  - `syndrome_o[4]` = XOR of received bits at positions 16–31, XORed with received P4.
+  - `syndrome_o[5]` = XOR of received bits at positions with bit 5 set, XORed with received P5.
+  - `syndrome_o[6]` = XOR of all received bits (overall parity check).
+
+- **Error detection and correction.**
+  - If `syndrome_o == 7'h00`, no error is detected. All bits of `data_o` equal the corresponding input bits.
+  - If `syndrome_o != 0` and overall parity is odd (syndrome_o[6] = 1), a single bit error occurred at the position indicated by `syndrome_o[4:0]`. Correct by flipping bit `syndrome_o[4:0]` and output the corrected value.
+  - If `syndrome_o != 0` and overall parity is even (syndrome_o[6] = 0), a double-bit error occurred; correction is not possible.
+
+- **Error flags.**
+  - `err_o[0]` (single-error flag): Asserted if a single correctable error is detected (syndrome non-zero with odd overall parity).
+  - `err_o[1]` (double-error flag): Asserted if a double uncorrectable error is detected (syndrome non-zero with even overall parity).
+  - If no error, both `err_o` bits are 0.
+
+- **Corrected output.** `data_o` always contains the corrected 32-bit data:
+  - If no error, `data_o = data_i[31:0]`.
+  - If single-bit error in a data bit position (positions 0–31), `data_o[position] = ~data_i[position]` (flip the erred bit).
+  - If single-bit error in a parity bit position (positions 32–38), `data_o = data_i[31:0]` (data is unaffected; only parity is corrected internally, which is not output).
+
+- **Combinational operation.** All computations occur combinationally: `data_o`, `syndrome_o`, and `err_o` respond immediately to changes in `data_i`.
+
+## Clock and Reset Domains
+
+None. Combinational logic only.
+
+## Example decoding
+
+**No error case:**
+
+Input `data_i = 39'h000000001` (same as encoder output for `data_i = 32'h1`):
+- Syndrome computation yields `syndrome_o = 7'h00`.
+- `err_o = 2'b00` (no error).
+- `data_o = 32'h00000001` (uncorrected = corrected).
+
+**Single-bit error in data:**
+
+Input `data_i = 39'h000000003` (bit 1 flipped from previous, simulating a 1-bit error in the encoded value):
+- Syndrome computation detects error at position 1 or nearby.
+- `err_o[0] = 1` (single error correctable).
+- `data_o` = corrected data with the erred bit flipped back.
+
+**Double-bit error case:**
+
+Input with two bits flipped:
+- Syndrome is non-zero but overall parity is even.
+- `err_o[1] = 1` (double error detected).
+- `data_o` remains as-is (no correction attempted).
+- User must discard the data or apply additional recovery strategy.
+
+## Encoder-decoder pairing
+
+This decoder is the inverse of Prob047 encoder. An unmodified 39-bit codeword from the encoder yields `syndrome = 0` and `err_o = 0`. Single transient faults (single-bit flips) in the codeword are detected and corrected. Two independent bit errors trigger the double-error flag.

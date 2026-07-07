@@ -1,0 +1,81 @@
+Design a module called TopModule. This module is an escalation receiver that detects incoming differential escalation signals, issues escape requests when escalation is detected, and manages timeout-based escalation trigger logic.
+
+## Overview
+
+TopModule is the receive side of a differential escalation protocol. It continuously monitors incoming escalation signals (esc_p/esc_n), detects transitions as escalation events, and generates internal request signals with configurable timeout and severity mapping. When escalation is received, the module issues an immediate escape request; if escalation is not received within a timeout window, it also triggers an escape (timeout escalation).
+
+## Parameters
+
+| Parameter | Meaning | Default |
+|-----------|---------|---------|
+| `N_ESC_SEV` | Number of escalation severity levels (e.g., 4 for warning/critical/fatal). | 4 |
+| `PING_CNT_DW` | Width of the ping counter (controls timeout precision). | 16 |
+| `SkewCycles` | Number of clock cycles allowed for differential pair skew. | 1 |
+| `TimeoutCntDw` | Computed width for internal timeout counters (derived from severity and ping count width). | — |
+
+## Interface
+
+| Port | Direction | Width | Description |
+|------|-----------|-------|-------------|
+| `clk_i` | input | 1 | System clock. |
+| `rst_ni` | input | 1 | Asynchronous active-low reset. |
+| `esc_req_o` | output | 1 | Escalation request output: asserted when escalation is detected or timeout triggers. |
+| `esc_rx_o` | output | esc_rx_t | Differential feedback to sender: contains ping response pair. |
+| `esc_tx_i` | input | esc_tx_t | Differential escalation input from sender: contains esc_p and esc_n. |
+
+Where:
+- `esc_tx_t.esc_p` / `esc_tx_t.esc_n` — differential escalation pair from remote sender.
+- `esc_rx_t.resp_p` / `esc_rx_t.resp_n` — differential response pair (sent by receiver).
+
+## Behavioral requirements
+
+### Escalation Detection
+- The module monitors the incoming differential escalation pair (esc_p, esc_n).
+- When a valid differential transition is detected (indicating escalation from the sender), `esc_req_o` is asserted.
+- The escalation event is latched and generates the escape request signal.
+
+### Timeout-Based Escalation
+- The module implements a watchdog mechanism: if no escalation is received within a configurable timeout period, it automatically asserts `esc_req_o`.
+- The timeout is derived from the `PING_CNT_DW` and severity configuration.
+- This provides a fail-safe: if the sender dies and stops sending escalation pulses, the receiver will eventually escalate.
+
+### Severity Levels
+- The module supports `N_ESC_SEV` different escalation severity levels, each with its own timeout configuration.
+- Timeouts are calibrated per severity level to allow appropriate response windows.
+
+### Ping Response
+- The receiver responds to ping requests (which may be embedded in the escalation protocol) by driving the differential response pair (resp_p/resp_n).
+- This allows the sender to verify link responsiveness without triggering actual escalation.
+
+### Signal Integrity
+- The differential decoding continuously checks for encoding violations (both rails high or low).
+- Violations are treated as escalation triggers to maximize safety.
+
+### Reset
+- On `rst_ni` assertion (active low), all internal state, timeouts, and escalation latches are cleared.
+- The module re-initializes with all timeouts armed.
+
+## Behavioral Detail: Timeout and Severity Mapping
+
+Escalation severity levels determine how quickly the module escalates if no heartbeat is received:
+
+| Severity | Typical Timeout | Meaning |
+|----------|---|---|
+| 0 (Low) | Long (e.g., 65k cycles) | Informational; slow timeout for non-critical events. |
+| 1 (Medium) | Medium (e.g., 32k cycles) | Warning; moderate urgency. |
+| 2 (High) | Short (e.g., 8k cycles) | Critical; faster escalation. |
+| 3 (Fatal) | Very short (e.g., 1k cycles) | Fatal-level; immediate escalation on timeout. |
+
+Actual timeout values are calculated using `PING_CNT_DW` and multiplied by a margin factor for each severity.
+
+## Example
+
+| Cycle | `esc_tx_i` (esc_p, esc_n) | No RX for N cycles | Timeout Triggered | `esc_req_o` | `esc_rx_o` (resp) | Notes |
+|-------|---|---|---|---|---|---|
+| 0 | (0,0) quiet | 0 | — | 0 | (0,0) quiet | Idle, awaiting escalation |
+| 100 | (1,0) active | 0 | — | 1 | (0,0) quiet | Escalation detected |
+| 101 | (0,0) quiet | 0 | — | 1 | respond with (1,0) | Receiver confirms escalation detected |
+| 102–10000 | (0,0) quiet | 100–10000 | — | 0 | (0,0) quiet | No escalation, normal timeout countdown |
+| 10001 | (0,0) quiet | 10001 | Yes | 1 | (0,0) quiet | Timeout fired, escalation auto-triggered |
+
+Exact timing depends on severity level configuration and `PING_CNT_DW` width.

@@ -10,12 +10,12 @@ specification prompt from the reference RTL (without leaking implementation deta
 The generated spec is what an LLM-under-test is asked to implement; the self-checking
 testbench then verifies its answer against the golden reference.
 
-The initial designs are drawn from the
-[PULP platform](https://github.com/pulp-platform) IP libraries (e.g.
-[common_cells](https://github.com/pulp-platform/common_cells),
-[axi](https://github.com/pulp-platform/axi)), but the flow is source-agnostic and works
+The initial designs are drawn from
+[OpenTitan](https://github.com/lowRISC/opentitan) (`hw/ip/prim/` primitives and
+peripheral IPs) and the [PULP platform](https://github.com/pulp-platform)
+([axi](https://github.com/pulp-platform/axi)), but the flow is source-agnostic and works
 with any OSHW design that ships a [Bender](https://github.com/pulp-platform/bender)
-manifest.
+manifest or a hand-authored `Bender.yml` wrapper.
 
 The idea of this repository is inspired by
 [verilog-eval](https://github.com/NVlabs/verilog-eval) from NVIDIA.
@@ -41,17 +41,28 @@ Keys already present in the environment take precedence over `key.cfg`.
 
 ## Getting started
 
-This project uses Git submodules (the OSHW design sources) that have to be initialized.
-Either clone the repository recursively:
+All design sources are **vendored** — there are no Git submodules. Each asset directory holds
+a `Bender.yml` with a `vendor_package` stanza that pins the exact upstream revision(s), a
+committed `vendor/` subtree with the curated source subset, and (where needed) reproducible
+`patches/`. A fresh checkout is fully self-contained: pickling needs no submodule init and no
+network.
+
+* **OpenTitan** (`assets/opentitan/`) — a curated subset of the
+  [OpenTitan](https://github.com/lowRISC/opentitan) tree. Patches in
+  `assets/opentitan/patches/` carry a few tool-specific parse fixes and the formal-testbench
+  wiring described below.
+
+* **PULP axi** (`assets/axi/`) — the [axi](https://github.com/pulp-platform/axi) library plus
+  its transitive dependencies (`common_cells`, `common_verification`, `tech_cells_generic`),
+  each vendored as its own `vendor_package` pinned to the revision axi's `Bender.lock`
+  resolved. axi is not self-contained (its RTL instantiates `common_cells` modules), so the
+  dependencies are vendored alongside it rather than fetched on demand.
+
+To refresh a vendored subset from upstream and re-apply its patches (only needed to change a
+pinned revision):
 
 ```bash
-git clone --recursive <url>
-```
-
-or fetch the submodules afterwards:
-
-```bash
-git submodule update --init --recursive
+(cd assets/opentitan && bender vendor init)   # or assets/axi
 ```
 
 ## Setup
@@ -156,15 +167,38 @@ The `_test.sv` handed to the assessed LLM is the golden with the reference
 `module TopModule … endmodule` definition removed, leaving an instantiation slot for the
 LLM's own implementation. Identifiers are normalized to `TopModule`/`TopTestbench`.
 
+### Testbenches: OpenTitan's formal (FPV) harnesses
+
+OpenTitan does not ship standalone simulation testbenches for its primitives — its
+non-primitive IPs use UVM (which does not pickle), and its primitives are verified
+**formally**. For the primitives that carry a formal-property setup, we pickle that setup as
+the golden: OpenTitan's `hw/ip/prim/fpv/` provides, per design, a testbench harness
+(`*_tb.sv`), an assertion module of formal properties (`*_assert_fpv.sv`, a mostly black-box
+reference model built from the DUT's ports), and a `bind` file wiring the properties onto the
+DUT. Because a `bind` module is a separate elaboration root that `--top` reachability would
+otherwise drop, the vendored harness is patched (see `assets/opentitan/patches/`) to
+instantiate its bind module, so the pickled golden carries the DUT **and** its formal
+specification. A small number of white-box assertions that reach into OpenTitan-internal
+signals are removed by the same patch, so the LLM's own `TopModule` — which need not
+replicate those internals — still elaborates against `_test.sv`. Checking an answer against
+these properties requires a formal tool (e.g. JasperGold, SymbiYosys), not plain simulation.
+
+Designs without such a setup are emitted RTL-only (`_ref.sv` + spec, no `_test*.sv`).
+
 ## Example
 
 An exemplary input `assets.json`:
 
 ```json
 {
-  "assets/common_cells": [
-    ["delta_counter", "delta_counter.sv", ""],
-    ["fifo_v3", "fifo_v3.sv", "fifo_tb.sv"]
+  "assets/opentitan": [
+    ["prim_fifo_sync",  "hw/ip/prim/rtl/prim_fifo_sync.sv", "hw/ip/prim/fpv/tb/prim_fifo_sync_tb.sv"],
+    ["prim_lfsr",       "hw/ip/prim/rtl/prim_lfsr.sv",      "hw/ip/prim/fpv/tb/prim_lfsr_tb.sv"],
+    ["uart",            "hw/ip/uart/rtl/uart.sv",           ""]
+  ],
+  "assets/axi": [
+    ["axi_cut",   "vendor/axi/src/axi_cut.sv",   ""],
+    ["axi_demux", "vendor/axi/src/axi_demux.sv", ""]
   ]
 }
 ```
@@ -172,5 +206,10 @@ An exemplary input `assets.json`:
 Each tuple, from left to right:
 
 * top-level module name (the DUT);
-* `.sv` source file (relative to the asset dir) where the DUT is declared;
+* `.sv` source file path used to derive the `--top` module name (stem = module name);
 * `.sv` source file with a testbench for the DUT — leave `""` if none.
+
+The JSON key (e.g. `"assets/opentitan"` or `"assets/axi"`) must point to a directory
+containing a `Bender.yml`; source paths in each tuple are relative to that directory and
+resolve into its committed `vendor/` subtree. OpenTitan's non-primitive IPs use full UVM
+testbenches which are not pickle-compatible; use `""` for those.
